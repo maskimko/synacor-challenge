@@ -4,21 +4,21 @@ use std::ffi::OsString;
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Args {
-    #[arg(short, long, default_value = "challenge.bin")]
+    #[arg(short, long, default_value = "./challenge.bin")]
     //#[arg(short, long)]
     rom: String,
-    #[arg(short, long)]
-    replay: String,
+    #[arg(short = 'R', long)]
+    replay: Option<String>,
 }
 
 pub fn parse_args() -> Result<Configuration, String> {
     let args = Args::parse();
     debug!("parsed arguments {:?}", args);
-    let replay: OsString = args.replay.into();
+    let maybe_replay: Option<OsString> = args.replay.map(OsString::from);
     let rom_file: OsString = args.rom.into();
     Ok(Configuration {
         rom_file,
-        replay_file: Some(replay),
+        replay_file: maybe_replay,
     })
 }
 #[derive(Debug)]

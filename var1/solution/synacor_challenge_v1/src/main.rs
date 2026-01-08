@@ -4,6 +4,7 @@ use synacor_challenge_v1::*;
 
 fn main() {
     println!("Welcome to SYNACOR challenge!");
+    env_logger::init();
     let conf: Configuration = match parse_args() {
         Ok(c) => c,
         Err(e) => {
