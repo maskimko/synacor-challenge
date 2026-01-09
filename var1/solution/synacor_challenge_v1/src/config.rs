@@ -47,12 +47,23 @@ impl Default for Configuration {
 }
 
 impl fmt::Display for Configuration {
-    fn fmt(&self, f: &mut fmt::Formatter<'_> ) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.replay_file.is_some() {
-        write!(f,"Configuration:\n\tROM file: {}\n\treplay file: {}\n\tROM size: {} bytes\n\treplay cmds. qty.: {}", &self.rom_file.display(), &self.replay_file.as_ref().map(|f| f.display()).unwrap(), &self.rom.len(), &self.replay_commands.len())
+            write!(
+                f,
+                "Configuration:\n\tROM file: {}\n\treplay file: {}\n\tROM size: {} bytes\n\treplay cmds. qty.: {}",
+                &self.rom_file.display(),
+                &self.replay_file.as_ref().map(|f| f.display()).unwrap(),
+                &self.rom.len(),
+                &self.replay_commands.len()
+            )
         } else {
-        write!(f,"Configuration:\n\tROM file: {}\n\treplay file: N/A\n\tROM size: {} bytes\n\treplay cmds. qty.: 0", &self.rom_file.display(), &self.rom.len())
-
+            write!(
+                f,
+                "Configuration:\n\tROM file: {}\n\treplay file: N/A\n\tROM size: {} bytes\n\treplay cmds. qty.: 0",
+                &self.rom_file.display(),
+                &self.rom.len()
+            )
         }
     }
 }
@@ -127,6 +138,6 @@ impl Configuration {
     }
 
     pub fn rom_n_replay(self) -> (Vec<u8>, Vec<String>) {
-        (self.rom, self.replay_commands) 
+        (self.rom, self.replay_commands)
     }
 }
