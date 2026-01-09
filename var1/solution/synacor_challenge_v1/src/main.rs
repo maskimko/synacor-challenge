@@ -1,10 +1,15 @@
+use colored::Colorize;
 use log::{error, warn};
 use synacor_challenge_v1::config::*;
 use synacor_challenge_v1::*;
-use colored::Colorize;
 
 fn main() {
-    println!("{}", "Welcome to maskimko's SYNACOR challenge solution!".green().underline());
+    println!(
+        "{}",
+        "Welcome to maskimko's SYNACOR challenge solution!"
+            .green()
+            .underline()
+    );
     env_logger::init();
     // load configuration
     let conf: Configuration = match parse_args() {
@@ -28,7 +33,12 @@ fn main() {
     };
     // launch VM
     match run(conf) {
-        Ok(()) => println!("{}","Challenge program finished successfully".green().underline()),
+        Ok(()) => println!(
+            "{}",
+            "Challenge program finished successfully"
+                .green()
+                .underline()
+        ),
         Err(e) => eprintln!("Error: {}", e),
     };
 }

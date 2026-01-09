@@ -1,6 +1,8 @@
+use colored::Colorize;
 use log::{debug, error, info, trace};
 use std::error::Error;
 use std::fmt::{self, Formatter};
+use std::iter;
 
 pub mod config;
 
@@ -52,10 +54,6 @@ impl Address {
         panic!("invalid address value (value must be less than {})", MAX);
     }
 
-    fn from_ptr(value: u16) -> Self {
-        (value as Ptr).into()
-    }
-
     fn next(&self) -> Self {
         self.add(1)
     }
@@ -66,7 +64,8 @@ impl Address {
 
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "addr[{}]", self.0)
+        let ptr: Ptr = self.into();
+        write!(f, "addr[{} ({:#x})]", self.0, ptr)
     }
 }
 
@@ -99,7 +98,10 @@ fn compose_value(byte_pair: (u8, u8)) -> u16 {
     let lb: u16 = byte_pair.0 as u16;
     let hb: u16 = (byte_pair.1 as u16) << 8;
     let value = (hb + lb) % MAX;
-    trace!("compose value {} from bytes {:?}", value, byte_pair);
+    trace!(
+        "compose value {} ({:#x}) from bytes {:?} ({:#x}, {:#x})",
+        value, value, byte_pair, byte_pair.0, byte_pair.1
+    );
     value
 }
 fn decompose_value(value: u16) -> (u8, u8) {
@@ -108,7 +110,10 @@ fn decompose_value(value: u16) -> (u8, u8) {
     let lb: u8 = (value % 8) as u8;
     let hb: u8 = (value >> 8) as u8;
     let byte_pair = (lb, hb);
-    trace!("decompose bytes {:?} from value {} ", byte_pair, value);
+    trace!(
+        "decompose bytes {:?} ({:#x}, {:#x}) from value {} ({:#x}) ",
+        byte_pair, byte_pair.0, byte_pair.1, value, value
+    );
     return byte_pair;
 }
 
@@ -121,6 +126,53 @@ impl VM {
             stack: vec![],
             current_address: Address::default(),
         }
+    }
+    fn show_state(&self) {
+        eprintln!("***         Virtual Machine State         ***");
+        eprintln!("{}", iter::repeat("=").take(44).collect::<String>());
+        eprintln!("{:<9}: {}", "halt", self.halt);
+        eprintln!("{:<9}: {}", "rom size", self.memory.len());
+        self.show_registers(1);
+        self.show_stack(1);
+        eprintln!("{:<9}: {}", "position", self.current_address);
+        eprintln!("=============================================");
+    }
+    fn show_registers(&self, indent: usize) {
+        let indentation = iter::repeat("  ").take(indent).collect::<String>();
+        eprintln!("{:<9}:", "registers");
+        eprintln!(
+            "{}{}",
+            indentation,
+            iter::repeat("-").take(44 - indent).collect::<String>()
+        );
+        self.registers
+            .iter()
+            .enumerate()
+            .for_each(|(n, r)| eprintln!("{}{}{}: {:<10}", indentation, "reg ", n, r));
+        eprintln!(
+            "{}{}",
+            indentation,
+            iter::repeat("-").take(44 - indent).collect::<String>()
+        );
+    }
+    fn show_stack(&self, indent: usize) {
+        let indentation = iter::repeat("  ").take(indent).collect::<String>();
+        eprintln!("{:<9}:", "stack");
+        eprintln!(
+            "{}{}",
+            indentation,
+            iter::repeat("+").take(44 - indent).collect::<String>()
+        );
+        self.stack
+            .iter()
+            .enumerate()
+            .rev()
+            .for_each(|(n, r)| eprintln!("{}[{}: {:<10}]", indentation, n, r));
+        eprintln!(
+            "{}{}",
+            indentation,
+            iter::repeat("+").take(44 - indent).collect::<String>()
+        );
     }
     fn new_from_rom(rom: Vec<u8>) -> Self {
         let mut vm = Self::new();
@@ -143,7 +195,10 @@ impl VM {
     }
     fn get_byte_value_from_ptr(&self, ptr: Ptr) -> u8 {
         let b = self.memory[ptr as usize];
-        trace!("fetched {} from memory pointer {} ", b, ptr);
+        trace!(
+            "fetched {} [{:#x}] from memory pointer {} [{:#x}] ",
+            b, b, ptr, ptr
+        );
         b
     }
     fn get_data_from_raw_value(&self, v: u16) -> Data {
@@ -185,13 +240,26 @@ impl VM {
         v
     }
 
+    fn set_position(&mut self, pos: Address) {
+        trace!("{}", format!("set position to {}", pos).yellow().italic());
+        self.current_address = pos;
+    }
+
     fn step(&mut self) {
-        trace!("{} stepping to the next address", &self.current_address);
-        self.current_address = self.current_address.next();
+        let next_address = self.current_address.next();
+        trace!(
+            "{} stepping to the next address {}",
+            &self.current_address, next_address
+        );
+        self.set_position(next_address);
     }
     fn step_n(&mut self, n: u16) {
-        trace!("{} stepping {} addresses forward", &self.current_address, n);
-        self.current_address = self.current_address.add(n);
+        let new_address = self.current_address.add(n);
+        trace!(
+            "{} stepping {} addresses forward to {}",
+            &self.current_address, n, &new_address
+        );
+        self.set_position(new_address);
     }
     // Here  ops functions go
     fn noop(&mut self) {
@@ -213,20 +281,23 @@ impl VM {
 
     fn jmp(&mut self, a: Address) {
         debug!("{} jmp: {}", &self.current_address, &a);
-        self.current_address = Address::new(self.get_data_from_addr(a));
+        let pos = Address::new(self.get_data_from_addr(a));
+        self.set_position(pos);
     }
     fn jmp_true(&mut self, a: Address, b: Address) {
         debug!("{} jt: {} {}", &self.current_address, &a, &b);
-        if  self.get_data_from_addr(a) != 0 {
-        self.current_address = Address::new(self.get_data_from_addr(b));
+        if self.get_data_from_addr(a) != 0 {
+            let pos = Address::new(self.get_data_from_addr(b));
+            self.set_position(pos);
         } else {
             self.step_n(3);
         }
     }
     fn jmp_false(&mut self, a: Address, b: Address) {
         debug!("{} jf: {} {}", &self.current_address, &a, &b);
-        if  self.get_data_from_addr(a) == 0 {
-        self.current_address = Address::new(self.get_data_from_addr(b));
+        if self.get_data_from_addr(a) == 0 {
+            let pos = Address::new(self.get_data_from_addr(b));
+            self.set_position(pos);
         } else {
             self.step_n(3);
         }
@@ -238,6 +309,7 @@ impl VM {
 
         loop {
             if self.halt {
+                self.show_state();
                 break;
             }
             cycles += 1;
