@@ -97,11 +97,24 @@ fn compose_value(byte_pair: (u8, u8)) -> u16 {
     // - each number is stored as a 16-bit little-endian pair (low byte, high byte)
     let lb: u16 = byte_pair.0 as u16;
     let hb: u16 = (byte_pair.1 as u16) << 8;
-    let value = (hb + lb) % MAX;
+    // Let's try not perform mod operation on this level
+    // let value = (hb + lb) % MAX;
+    // This was a bug preventing from getting register number!
+    let value = hb + lb;
     trace!(
         "compose value {} ({:#x}) from bytes {:?} ({:#x}, {:#x})",
         value, value, byte_pair, byte_pair.0, byte_pair.1
     );
+    // If the value is greater than 32768 + 8 (MAX + number of registers), it will cause panic
+    // anyway, so it makes sense to log it early
+    if value > MAX+8 {
+        trace!(
+            "{} detected on composed value {} ({:#x})",
+            "OVERFLOW".yellow(),
+            value,
+            value
+        );
+    }
     value
 }
 fn decompose_value(value: u16) -> (u8, u8) {
