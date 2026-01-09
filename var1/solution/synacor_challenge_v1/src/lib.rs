@@ -8,7 +8,8 @@ pub mod config;
 const MAX: u16 = 1 << 15;
 struct VM {
     halt: bool,
-    memory: [u8; 1 << 15],
+    memory: [u8; 1 << 16], // as there is 15 bit address space, but each address points to the 2
+    // bytes, so we actually need 15 bit * 2 address space for the memory array. 
     registers: [u16; 8],
     stack: Vec<u16>,
     // - all numbers are unsigned integers 0..32767 (15-bit)
@@ -113,7 +114,7 @@ fn decompose_value(value: u16) -> (u8, u8) {
 
 impl VM {
     fn new() -> Self {
-        VM { halt: false, memory: [0; 1<<15], registers: [0;8], stack: vec![], current_address: Address::default()}
+        VM { halt: false, memory: [0; 1<<16], registers: [0;8], stack: vec![], current_address: Address::default()}
     }
     fn new_from_rom(rom: Vec<u8>) -> Self {
         let mut vm  = Self::new();
@@ -136,7 +137,7 @@ impl VM {
     }
     fn get_byte_value_from_ptr(&self, ptr: Ptr) -> u8 {
         let b = self.memory[ptr as usize];
-        trace!("fetched {} form memory pointer {} ", b, ptr);
+        trace!("fetched {} from memory pointer {} ", b, ptr);
         b
     }
     fn get_data_from_raw_value(&self, v: u16) -> Data {
@@ -174,10 +175,16 @@ impl VM {
     }
 
     fn step(&mut self) {
+        trace!("{} stepping to the next address", &self.current_address);
         self.current_address = self.current_address.next();
     }
     fn step_n(&mut self, n: u16) {
+        trace!("{} stepping {} addresses forward", &self.current_address, n);
         self.current_address = self.current_address.add(n);
+    }
+    fn noop(&mut self) {
+                    trace!("{} noop", &self.current_address);
+       self.step(); 
     }
     fn main_loop(&mut self) -> Result<u64, Box<dyn Error>> {
         trace!("starting the main loop");
@@ -344,7 +351,8 @@ jf: 8 a b
 
             unimplemented!("main loop is not implemented yet");
 */
-                    unimplemented!();
+                    // TODO: Probably it worth to add fuctions for each operation...
+                    self.noop();
                 },
                 instruction => panic!("got invalid instruction {}", instruction),
             }
@@ -409,7 +417,7 @@ noop: 21
 }
 
 pub fn run(config: config::Configuration) -> Result<(), Box<dyn Error>> {
-    debug!("received configuration {:?}", config);
+    debug!("{}", format!("received configuration {}", &config));
     if !config.is_valid() {
         return Err("configuration is invalid".into())
     }

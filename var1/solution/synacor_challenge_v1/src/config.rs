@@ -1,6 +1,7 @@
 use clap::Parser;
 use log::{debug, trace, warn};
 use std::error::Error;
+use std::fmt::{self, Formatter};
 use std::{
     ffi::OsString,
     fs::{self, File},
@@ -41,6 +42,17 @@ impl Default for Configuration {
             replay_file: None,
             rom: vec![],
             replay_commands: vec![],
+        }
+    }
+}
+
+impl fmt::Display for Configuration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_> ) -> fmt::Result {
+        if self.replay_file.is_some() {
+        write!(f,"Configuration:\n\tROM file: {}\n\treplay file: {}\n\tROM size: {} bytes\n\treplay cmds. qty.: {}", &self.rom_file.display(), &self.replay_file.as_ref().map(|f| f.display()).unwrap(), &self.rom.len(), &self.replay_commands.len())
+        } else {
+        write!(f,"Configuration:\n\tROM file: {}\n\treplay file: N/A\n\tROM size: {} bytes\n\treplay cmds. qty.: 0", &self.rom_file.display(), &self.rom.len())
+
         }
     }
 }
