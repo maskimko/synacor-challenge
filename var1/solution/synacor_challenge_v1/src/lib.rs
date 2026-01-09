@@ -215,6 +215,23 @@ impl VM {
         debug!("{} jmp: {}", &self.current_address, &a);
         self.current_address = Address::new(self.get_data_from_addr(a));
     }
+    fn jmp_true(&mut self, a: Address, b: Address) {
+        debug!("{} jt: {} {}", &self.current_address, &a, &b);
+        if  self.get_data_from_addr(a) != 0 {
+        self.current_address = Address::new(self.get_data_from_addr(b));
+        } else {
+            self.step_n(3);
+        }
+    }
+    fn jmp_false(&mut self, a: Address, b: Address) {
+        debug!("{} jf: {} {}", &self.current_address, &a, &b);
+        if  self.get_data_from_addr(a) == 0 {
+        self.current_address = Address::new(self.get_data_from_addr(b));
+        } else {
+            self.step_n(3);
+        }
+    }
+
     fn main_loop(&mut self) -> Result<u64, Box<dyn Error>> {
         trace!("starting the main loop");
         let mut cycles: u64 = 0;
@@ -281,14 +298,14 @@ impl VM {
                     jt: 7 a b
                       if <a> is nonzero, jump to <b>
                     */
-                    unimplemented!();
+                    self.jmp_true(self.current_address.add(1), self.current_address.add(2));
                 }
                 8 => {
                     /*
                     jf: 8 a b
                       if <a> is zero, jump to <b>
                     */
-                    unimplemented!();
+                    self.jmp_false(self.current_address.add(1), self.current_address.add(2));
                 }
                 9 => {
                     /*
