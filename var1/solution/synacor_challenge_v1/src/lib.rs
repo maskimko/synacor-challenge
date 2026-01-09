@@ -92,6 +92,32 @@ enum Data {
     LiteralValue(u16),
     Register(usize),
 }
+impl Data {
+    fn is_register(&self) -> bool {
+        if let Data::Register(_) = self {
+            true
+        } else {
+            false
+        }
+    }
+    fn is_literal(&self) -> bool {
+        if let Data::LiteralValue(_) = self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl fmt::Display for Data {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Data::Register(r) => write!(f, "register[{}]", r),
+            Data::LiteralValue(v) => write!(f, "value[{}]", v),
+        }
+    }
+}
+/// This function composes u16 number from little endian byte pair of low byte and high byte
 fn compose_value(byte_pair: (u8, u8)) -> u16 {
     // - all math is modulo 32768; 32758 + 15 => 5
     // - each number is stored as a 16-bit little-endian pair (low byte, high byte)
@@ -100,6 +126,7 @@ fn compose_value(byte_pair: (u8, u8)) -> u16 {
     // Let's try not perform mod operation on this level
     // let value = (hb + lb) % MAX;
     // This was a bug preventing from getting register number!
+    // The real mod '%' operation will happen at 'get_data_from_raw_value' function
     let value = hb + lb;
     trace!(
         "compose value {} ({:#x}) from bytes {:?} ({:#x}, {:#x})",
@@ -107,7 +134,7 @@ fn compose_value(byte_pair: (u8, u8)) -> u16 {
     );
     // If the value is greater than 32768 + 8 (MAX + number of registers), it will cause panic
     // anyway, so it makes sense to log it early
-    if value > MAX+8 {
+    if value > MAX + 8 {
         trace!(
             "{} detected on composed value {} ({:#x})",
             "OVERFLOW".yellow(),
@@ -115,11 +142,20 @@ fn compose_value(byte_pair: (u8, u8)) -> u16 {
             value
         );
     }
+    assert!(
+        validate_value(value),
+        "value bigger than 32768 + 8 is invalid"
+    );
     value
 }
+/// This function decomposes u16 number to the little endian byte pair of low byte and high byte
 fn decompose_value(value: u16) -> (u8, u8) {
     // - all math is modulo 32768; 32758 + 15 => 5
     // - each number is stored as a 16-bit little-endian pair (low byte, high byte)
+    assert!(
+        validate_value(value),
+        "value bigger than 32768 + 8 is invalid"
+    );
     let lb: u8 = (value % 8) as u8;
     let hb: u8 = (value >> 8) as u8;
     let byte_pair = (lb, hb);
@@ -128,6 +164,40 @@ fn decompose_value(value: u16) -> (u8, u8) {
         byte_pair, byte_pair.0, byte_pair.1, value, value
     );
     return byte_pair;
+}
+
+fn validate_value(val: u16) -> bool {
+    val < MAX + 8
+}
+/// This method takes a provided value validates it and packs it to Data
+fn pack_raw_value(v: u16) -> Data {
+    let data = match v {
+        val if v < MAX => {
+            trace!("packing literal value {}", v);
+            Data::LiteralValue(val)
+        }
+        r if r % MAX < 8 => {
+            let reg = (r % MAX) as usize;
+            trace!("packing register number value {} as reg: {}", v, reg);
+            Data::Register(reg)
+        }
+        // Probably we can just return an error here
+        _ => panic!("values bigger than 32776 are invalid"),
+    };
+    data
+}
+/// This function just converts Data to raw memory address
+fn unpack_data_to_address(d: Data) -> u16 {
+    let raw = match d {
+        Data::LiteralValue(v) => v,
+        Data::Register(r) => MAX + r as u16,
+    };
+
+    assert!(
+        validate_value(raw),
+        "value bigger than 32768 + 8 is invalid"
+    );
+    raw
 }
 
 impl VM {
@@ -199,6 +269,7 @@ impl VM {
         }
         trace!("loading OK!");
     }
+    /// This method gets 2 adjasent bytes from the RAM and composes a number u16 from it
     fn get_value_from_addr(&self, addr: &Address) -> u16 {
         trace!("getting value from address {}", addr);
         let ptr = addr.into();
@@ -206,6 +277,7 @@ impl VM {
         let hb = self.get_byte_value_from_ptr(ptr + 1);
         compose_value((lb, hb))
     }
+    /// This method gets raw memory value by pointer
     fn get_byte_value_from_ptr(&self, ptr: Ptr) -> u8 {
         let b = self.memory[ptr as usize];
         trace!(
@@ -214,26 +286,9 @@ impl VM {
         );
         b
     }
-    fn get_data_from_raw_value(&self, v: u16) -> Data {
-        let data = match v {
-            val if v < MAX => {
-                trace!("packing literal value {}", v);
-                Data::LiteralValue(val)
-            }
-            r if r % MAX < 8 => {
-                trace!("packing register number {}", v);
-                Data::Register((r % MAX) as usize)
-            }
-            _ => panic!("values bigger than 32776 are invalid"),
-        };
-        data
-    }
 
     fn get_data(&self, v: u16) -> u16 {
-        match self.get_data_from_raw_value(v) {
-            Data::LiteralValue(lv) => lv,
-            Data::Register(r) => self.get_from_register(r),
-        }
+        self.unpack_data(pack_raw_value(v))
     }
 
     fn get_data_from_addr(&self, addr: Address) -> u16 {
@@ -251,6 +306,15 @@ impl VM {
         let v = self.registers[register];
         trace!("getting value {} from register {}", v, register);
         v
+    }
+    /// This method extracts data from both variants of Data enum
+    fn unpack_data(&self, data: Data) -> u16 {
+        let val  = match data {
+            Data::LiteralValue(lv) => lv,
+            Data::Register(r) => self.get_from_register(r),
+        };
+        trace!("unpacked value {} from {}", val, data);
+        val
     }
 
     fn set_position(&mut self, pos: Address) {
@@ -315,6 +379,160 @@ impl VM {
             self.step_n(3);
         }
     }
+    fn set_register(&mut self, a: Address, b: Address) {
+        debug!("{} set: {} {}", &self.current_address, &a, &b);
+        let reg_value = self.get_value_from_addr(&a);
+        let reg = pack_raw_value(reg_value);
+        assert!(
+            reg.is_register(),
+            "obtained value cannot be used as register"
+        );
+        let raw_value = self.get_value_from_addr(&b);
+        let val = pack_raw_value(raw_value);
+        assert!(
+            val.is_literal(),
+            "obtained value cannot be used as a literal value"
+        );
+        self.set_value_to_register(reg, val);
+        self.step_n(3);
+    }
+    fn set_value_to_register(&mut self, reg: Data, val: Data) {
+        trace!("setting {} to register {}", val, reg);
+        assert!(
+            reg.is_register(),
+            "obtained value cannot be used as register"
+        );
+        assert!(
+            val.is_literal(),
+            "obtained value cannot be used as a literal value"
+        );
+        if let (Data::Register(r), Data::LiteralValue(v)) = (reg, val) {
+            self.store_raw_value_to_register(r, v);
+        } else {
+            panic!("failed to unpack register and its value")
+        }
+    }
+
+    fn store_raw_value_to_register(&mut self, register_number: usize, value: u16) {
+        assert!(register_number < 8);
+        assert!(value < MAX + 8); // Here I tollerate storing register pointer values. Probably it
+        // is a mistake
+        trace!("storing value {} to register {}", value, register_number);
+        self.registers[register_number] = value;
+    }
+
+    fn add(&mut self, a: Address, b: Address, c: Address) {
+        debug!("{} add: {} {} {}", &self.current_address, &a, &b, &c);
+        let reg = pack_raw_value(self.get_value_from_addr(&a));
+        let value1 = pack_raw_value(self.get_value_from_addr(&b));
+        let value2 = pack_raw_value(self.get_value_from_addr(&c));
+        self.add_values(reg, value1, value2);
+        self.step_n(4);
+    }
+
+    fn add_values(&mut self, reg: Data, v1: Data, v2: Data) {
+        trace!(
+            "storing result of add operation on {} and {} to {}",
+            v1, v2, reg
+        );
+
+        assert!(
+            reg.is_register(),
+            "first argument value cannot be used as register"
+        );
+        assert!(
+            v1.is_literal(),
+            "second argument value cannot be used as a literal value"
+        );
+        assert!(
+            v2.is_literal(),
+            "third value cannot be used as a literal value"
+        );
+        if let (Data::LiteralValue(val1), Data::LiteralValue(val2), Data::Register(r)) =
+            (v1, v2, reg)
+        {
+            self.store_raw_value_to_register(r, (val1 + val2) % MAX);
+        } else {
+            panic!("cannot unpack values and register for add operation");
+        }
+    }
+
+    fn eq(&mut self, a: Address, b: Address, c: Address) {
+        debug!("{} eq: {} {} {}", &self.current_address, &a, &b, &c);
+        let reg = pack_raw_value(self.get_value_from_addr(&a));
+        let value1 = pack_raw_value(self.get_value_from_addr(&b));
+        let value2 = pack_raw_value(self.get_value_from_addr(&c));
+        if self.store_equality(reg, value1, value2) {
+            trace!("successfully stored positive result of comparison");
+        } else {
+            trace!("successfully stored negative result of comparison");
+        }
+        self.step_n(4);
+    }
+
+    fn store_equality(&mut self, reg: Data, v1: Data, v2: Data) -> bool {
+        trace!(
+            "storing result of eq operation of {} and {} to {}",
+            v1, v2, reg
+        );
+        assert!(
+            reg.is_register(),
+            "first argument value cannot be used as register"
+        );
+        let val1 = self.unpack_data(v1);
+        let val2 = self.unpack_data(v2);
+        trace!("comparing values {} and {}", val1, val2);
+        if let Data::Register(r) = reg {
+            if val1 == val2 {
+                self.store_raw_value_to_register(r, 1);
+                true
+            } else {
+                self.store_raw_value_to_register(r, 0);
+                false
+            }
+        } else {
+            panic!("cannot unpack values and register for add operation");
+        }
+    }
+
+    fn push(&mut self, a: Address) {
+        debug!("{} push: {}", &self.current_address, &a);
+        let val = self.get_value_from_addr(&a);
+        self.stack.push(val);
+        self.step_n(2);
+    }
+
+    fn pop(&mut self, a: Address) {
+        debug!("{} pop: {}", &self.current_address, &a);
+        let val = self.stack.pop().expect("stack is empty");
+        trace!("popped value {}", val);
+        self.set_memory_by_address(a, val);
+        self.step_n(2);
+    }
+
+    fn set_memory_by_address(&mut self, a: Address, val: u16) {
+        trace!("setting memory by address {} to {}", &a, val);
+        let ptr: Ptr = (&a).into();
+        self.set_memory(ptr, val);
+    }
+    fn set_memory(&mut self, ptr: Ptr, val: u16) {
+        trace!(
+            "setting value: {} to memory raw ptr: {}({:#x})",
+            val, ptr, ptr
+        );
+        assert!(
+            validate_value(val),
+            "value bigger than 32768 + 8 is invalid"
+        );
+        assert_eq!(
+            (ptr as u16 % 2),
+            0,
+            "first pointer must point to an even address"
+        );
+        let (lb, hb) = decompose_value(val);
+        self.memory[ptr as usize] = lb;
+        self.memory[ptr as usize + 1] = hb;
+    }
 
     fn main_loop(&mut self) -> Result<u64, Box<dyn Error>> {
         trace!("starting the main loop");
@@ -341,28 +559,33 @@ impl VM {
                     set: 1 a b
                       set register <a> to the value of <b>
                     */
-                    unimplemented!();
+                    self.set_register(self.current_address.add(1), self.current_address.add(2));
                 }
                 2 => {
                     /*
                     push: 2 a
                       push <a> onto the stack
                     */
-                    unimplemented!();
+                    self.push(self.current_address.add(1));
                 }
                 3 => {
                     /*
                     pop: 3 a
                       remove the top element from the stack and write it into <a>; empty stack = error
                     */
-                    unimplemented!();
+                    self.pop(self.current_address.add(1));
+                //    self.show_state();
                 }
                 4 => {
                     /*
                     eq: 4 a b c
                       set <a> to 1 if <b> is equal to <c>; set it to 0 otherwise
                     */
-                    unimplemented!();
+                    self.eq(
+                        self.current_address.add(1),
+                        self.current_address.add(2),
+                        self.current_address.add(3),
+                    );
                 }
                 5 => {
                     /*
@@ -397,7 +620,11 @@ impl VM {
                                         add: 9 a b c
                       assign into <a> the sum of <b> and <c> (modulo 32768)
                     */
-                    unimplemented!();
+                    self.add(
+                        self.current_address.add(1),
+                        self.current_address.add(2),
+                        self.current_address.add(3),
+                    );
                 }
                 10 => {
                     /*
