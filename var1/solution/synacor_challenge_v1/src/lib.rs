@@ -548,8 +548,22 @@ impl VM {
 
     fn set_memory_by_address(&mut self, a: Address, val: u16) {
         trace!(" setting memory by address {} to {}", &a, val);
+        let r_data = pack_raw_value(self.get_value_from_addr(&a));
+        let v_data = pack_raw_value(val);
+        match r_data {
+            Data::Register(r) => {
+                trace!(
+                    " following mem address and setting register {} to value {}",
+                    r, val
+                );
+                self.set_value_to_register(r_data, v_data);
+            }
+            Data::LiteralValue(_) => {
                 let ptr: Ptr = (&a).into();
-                self.set_memory(ptr, val);
+                let raw_value = self.unpack_data(v_data);
+                self.set_memory(ptr, raw_value);
+            }
+        }
     }
     fn set_memory(&mut self, ptr: Ptr, val: u16) {
         trace!(
@@ -605,6 +619,7 @@ impl VM {
                       push <a> onto the stack
                     */
                     self.push(self.current_address.add(1));
+                    self.show_state();
                 }
                 3 => {
                     /*
@@ -612,6 +627,7 @@ impl VM {
                       remove the top element from the stack and write it into <a>; empty stack = error
                     */
                     self.pop(self.current_address.add(1));
+                    self.show_state();
                     //    self.show_state();
                 }
                 4 => {
@@ -711,7 +727,6 @@ impl VM {
                                         wmem: 16 a b
                       write the value from <b> into memory at address <a>
                     */
-                    unimplemented!();
                 }
                 17 => {
                     /*
