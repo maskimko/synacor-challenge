@@ -1,4 +1,5 @@
 use clap::Parser;
+use colored::control;
 use log::{debug, trace, warn};
 use std::error::Error;
 use std::fmt;
@@ -8,7 +9,6 @@ use std::{
     io::{BufRead, BufReader, Read},
     path::PathBuf,
 };
-use colored::control;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -18,7 +18,11 @@ struct Args {
     rom: String,
     #[arg(short = 'R', long, help = "File with replay commands to run")]
     replay: Option<String>,
-    #[arg(long, default_value = "false", help = "Force color output, even if piped (Works with CLICOLOR_FORCE=1)")]
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Force color output, even if piped (Works with CLICOLOR_FORCE=1)"
+    )]
     force_color: bool,
 }
 

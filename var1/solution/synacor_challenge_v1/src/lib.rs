@@ -4,8 +4,8 @@ use log::{Level, debug, error, info, trace};
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
-use std::iter;
 use std::io::{self, Read};
+use std::iter;
 
 pub mod config;
 
@@ -168,7 +168,7 @@ fn decompose_value(value: u16) -> (u8, u8) {
         validate_value(value),
         "value bigger than 32768 + 8 is invalid"
     );
-    let lb: u16 = value % (1<<8) ;
+    let lb: u16 = value % (1 << 8);
     let hb: u16 = value >> 8;
     trace!("  got low byte {:#x} and high byte: {:#x}", lb, hb);
     let byte_pair: (u8, u8) = (lb as u8, hb as u8);
@@ -504,7 +504,10 @@ impl VM {
         // operations add mult mod and or not
         trace!(
             "   storing result of {} operation on {} and {:?} to {}",
-           op.get_instruction_name(), v1, v2, reg
+            op.get_instruction_name(),
+            v1,
+            v2,
+            reg
         );
 
         assert!(
@@ -555,7 +558,7 @@ impl VM {
                         "   performint bitwise negation operation ~ (!) on {} ({:#b})",
                         val1, val1
                     );
-                    let result = (!val1) % MAX; 
+                    let result = (!val1) % MAX;
                     trace!("   got negation result {} ({:#b})", result, result);
                     result
                 }
@@ -569,7 +572,10 @@ impl VM {
                     ),
                 )) % MAX,
             };
-            trace!("   got arithmetic ops result {} {:#x} {:#b}", result, result, result);
+            trace!(
+                "   got arithmetic ops result {} {:#x} {:#b}",
+                result, result, result
+            );
             self.store_raw_value_to_register(r, result);
         } else {
             panic!("cannot unpack values and register for add operation");
@@ -710,7 +716,10 @@ impl VM {
             Data::LiteralValue(_) => {
                 let ptr: Ptr = (&a).into();
                 let raw_value = self.unpack_data(v_data);
-                trace!("setting literal value {} (orig: {}) to memory address {} (Ptr: {})", raw_value, val, a, ptr);
+                trace!(
+                    "setting literal value {} (orig: {}) to memory address {} (Ptr: {})",
+                    raw_value, val, a, ptr
+                );
                 self.set_memory(ptr, raw_value);
             }
         }
@@ -793,16 +802,28 @@ impl VM {
         self.set_position(Address::new(addr));
     }
     fn rmem(&mut self, a: Address, b: Address) {
-        debug!( "{} {}: {} {}", &self.current_address, "rmem".magenta(), &a, &b);
+        debug!(
+            "{} {}: {} {}",
+            &self.current_address,
+            "rmem".magenta(),
+            &a,
+            &b
+        );
         let val_address = pack_raw_value(self.get_value_from_addr(&b));
         let reg = pack_raw_value(self.get_value_from_addr(&a));
-        let val  = self.get_data_from_addr(Address::new(self.unpack_data(val_address)));
+        let val = self.get_data_from_addr(Address::new(self.unpack_data(val_address)));
         trace!("got {} and {} after packing", reg, val);
         self.set_value_to_register(reg, pack_raw_value(val));
         self.step_n(3);
     }
     fn wmem(&mut self, a: Address, b: Address) {
-        debug!( "{} {}: {} {}", &self.current_address, "wmem".magenta(), &a, &b);
+        debug!(
+            "{} {}: {} {}",
+            &self.current_address,
+            "wmem".magenta(),
+            &a,
+            &b
+        );
         let val = self.get_data_from_addr(b); //30000
         let val_addr = self.get_data_from_addr(a); //20000
         trace!(" value of b {} value of address from a {}", val, val_addr);
@@ -810,23 +831,22 @@ impl VM {
         self.step_n(3);
     }
     /// This function is an implementation of the 'in' operational instruction
-    fn read_in(&mut self, a: Address){
+    fn read_in(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "in".magenta(), &a);
-        let mut buf : [u8;1] = [0];
+        let mut buf: [u8; 1] = [0];
         match io::stdin().read_exact(&mut buf) {
             Ok(()) => {
-               let c :u8  = buf[0];
+                let c: u8 = buf[0];
                 let reg = pack_raw_value(self.get_value_from_addr(&a));
                 let val = pack_raw_value(c.into());
-                self.set_value_to_register(reg, val );
-            }, 
+                self.set_value_to_register(reg, val);
+            }
             Err(e) => {
                 error!("failed to read from stdin. Error: {}", e);
                 panic!("failed on stdin reading");
             }
         }
         self.step_n(2);
-        
     }
     fn main_loop(&mut self) -> Result<u64, Box<dyn Error>> {
         trace!("starting the main loop");
