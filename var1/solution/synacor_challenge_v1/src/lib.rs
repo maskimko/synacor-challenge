@@ -3,6 +3,8 @@ use log::{debug, error, info, trace};
 use std::error::Error;
 use std::fmt::{self, Formatter};
 use std::iter;
+use std::collections::VecDeque;
+use std::os::raw;
 
 pub mod config;
 
@@ -13,7 +15,7 @@ struct VM {
     memory: [u8; 1 << 16], // as there is 15 bit address space, but each address points to the 2
     // bytes, so we actually need 15 bit * 2 address space for the memory array.
     registers: [u16; 8],
-    stack: Vec<u16>,
+    stack: VecDeque<u16>,
     // - all numbers are unsigned integers 0..32767 (15-bit)
     // - all math is modulo 32768; 32758 + 15 => 5
     current_address: Address, // internal execution pointer
@@ -129,14 +131,14 @@ fn compose_value(byte_pair: (u8, u8)) -> u16 {
     // The real mod '%' operation will happen at 'get_data_from_raw_value' function
     let value = hb + lb;
     trace!(
-        "compose value {} ({:#x}) from bytes {:?} ({:#x}, {:#x})",
+        "  compose value {} ({:#x}) from bytes {:?} ({:#x}, {:#x})",
         value, value, byte_pair, byte_pair.0, byte_pair.1
     );
     // If the value is greater than 32768 + 8 (MAX + number of registers), it will cause panic
     // anyway, so it makes sense to log it early
     if value > MAX + 8 {
         trace!(
-            "{} detected on composed value {} ({:#x})",
+            "  {} detected on composed value {} ({:#x})",
             "OVERFLOW".yellow(),
             value,
             value
@@ -160,7 +162,7 @@ fn decompose_value(value: u16) -> (u8, u8) {
     let hb: u8 = (value >> 8) as u8;
     let byte_pair = (lb, hb);
     trace!(
-        "decompose bytes {:?} ({:#x}, {:#x}) from value {} ({:#x}) ",
+        "  decompose bytes {:?} ({:#x}, {:#x}) from value {} ({:#x}) ",
         byte_pair, byte_pair.0, byte_pair.1, value, value
     );
     return byte_pair;
@@ -173,12 +175,12 @@ fn validate_value(val: u16) -> bool {
 fn pack_raw_value(v: u16) -> Data {
     let data = match v {
         val if v < MAX => {
-            trace!("packing literal value {}", v);
+            trace!("  packing literal value '{}'", v);
             Data::LiteralValue(val)
         }
         r if r % MAX < 8 => {
             let reg = (r % MAX) as usize;
-            trace!("packing register number value {} as reg: {}", v, reg);
+            trace!("  packing register number value '{}' as reg: ({})", v, reg);
             Data::Register(reg)
         }
         // Probably we can just return an error here
@@ -187,7 +189,7 @@ fn pack_raw_value(v: u16) -> Data {
     data
 }
 /// This function just converts Data to raw memory address
-fn unpack_data_to_address(d: Data) -> u16 {
+fn unpack_data_to_raw_address(d: Data) -> u16 {
     let raw = match d {
         Data::LiteralValue(v) => v,
         Data::Register(r) => MAX + r as u16,
@@ -206,7 +208,7 @@ impl VM {
             halt: false,
             memory: [0; 1 << 16],
             registers: [0; 8],
-            stack: vec![],
+            stack: VecDeque::new(),
             current_address: Address::default(),
         }
     }
@@ -240,7 +242,7 @@ impl VM {
     }
     fn show_stack(&self, indent: usize) {
         let indentation = iter::repeat("  ").take(indent).collect::<String>();
-        eprintln!("{:<9}:", "stack");
+        eprintln!("{:<9}  (size: {:3}):", "stack", self.stack.len());
         eprintln!(
             "{}{}",
             indentation,
@@ -271,7 +273,7 @@ impl VM {
     }
     /// This method gets 2 adjasent bytes from the RAM and composes a number u16 from it
     fn get_value_from_addr(&self, addr: &Address) -> u16 {
-        trace!("getting value from address {}", addr);
+        trace!(" getting value from address {}", addr);
         let ptr = addr.into();
         let lb = self.get_byte_value_from_ptr(ptr);
         let hb = self.get_byte_value_from_ptr(ptr + 1);
@@ -281,7 +283,7 @@ impl VM {
     fn get_byte_value_from_ptr(&self, ptr: Ptr) -> u8 {
         let b = self.memory[ptr as usize];
         trace!(
-            "fetched {} [{:#x}] from memory pointer {} [{:#x}] ",
+            "  fetched {} [{:#x}] from memory pointer {} [{:#x}] ",
             b, b, ptr, ptr
         );
         b
@@ -304,16 +306,16 @@ impl VM {
             );
         }
         let v = self.registers[register];
-        trace!("getting value {} from register {}", v, register);
+        trace!(" getting value {} from register {}", v, register);
         v
     }
     /// This method extracts data from both variants of Data enum
     fn unpack_data(&self, data: Data) -> u16 {
-        let val  = match data {
+        let val = match data {
             Data::LiteralValue(lv) => lv,
             Data::Register(r) => self.get_from_register(r),
         };
-        trace!("unpacked value {} from {}", val, data);
+        trace!(" unpacked value {} from {}", val, data);
         val
     }
 
@@ -340,29 +342,40 @@ impl VM {
     }
     // Here  ops functions go
     fn noop(&mut self) {
-        debug!("{} noop:", &self.current_address);
+        debug!("{} {}:", &self.current_address, "noop".magenta());
         self.step();
     }
     fn halt(&mut self) {
-        debug!("{} halt:", &self.current_address);
+        debug!("{} {}:", &self.current_address, "halt".magenta());
         self.halt = true;
         info!("VM has been halt");
     }
     fn out(&mut self, a: Address) {
-        debug!("{} out: {}", &self.current_address, &a);
+        debug!("{} {}: {}", &self.current_address, "out".magenta(), &a);
         let character = self.get_data_from_addr(a) as u8 as char;
+        trace!(
+            "printing character '{}' ({:#x})",
+            character.to_string().red(),
+            character as u8
+        );
         print!("{}", character);
 
         self.step_n(2);
     }
 
     fn jmp(&mut self, a: Address) {
-        debug!("{} jmp: {}", &self.current_address, &a);
+        debug!("{} {}: {}", &self.current_address, "jmp".magenta(), &a);
         let pos = Address::new(self.get_data_from_addr(a));
         self.set_position(pos);
     }
     fn jmp_true(&mut self, a: Address, b: Address) {
-        debug!("{} jt: {} {}", &self.current_address, &a, &b);
+        debug!(
+            "{} {}: {} {}",
+            &self.current_address,
+            "jt".magenta(),
+            &a,
+            &b
+        );
         if self.get_data_from_addr(a) != 0 {
             let pos = Address::new(self.get_data_from_addr(b));
             self.set_position(pos);
@@ -371,7 +384,13 @@ impl VM {
         }
     }
     fn jmp_false(&mut self, a: Address, b: Address) {
-        debug!("{} jf: {} {}", &self.current_address, &a, &b);
+        debug!(
+            "{} {}: {} {}",
+            &self.current_address,
+            "jf".magenta(),
+            &a,
+            &b
+        );
         if self.get_data_from_addr(a) == 0 {
             let pos = Address::new(self.get_data_from_addr(b));
             self.set_position(pos);
@@ -380,7 +399,13 @@ impl VM {
         }
     }
     fn set_register(&mut self, a: Address, b: Address) {
-        debug!("{} set: {} {}", &self.current_address, &a, &b);
+        debug!(
+            "{} {}: {} {}",
+            &self.current_address,
+            "set".magenta(),
+            &a,
+            &b
+        );
         let reg_value = self.get_value_from_addr(&a);
         let reg = pack_raw_value(reg_value);
         assert!(
@@ -397,17 +422,19 @@ impl VM {
         self.step_n(3);
     }
     fn set_value_to_register(&mut self, reg: Data, val: Data) {
-        trace!("setting {} to register {}", val, reg);
+        trace!("setting value: {} to register: {}", val, reg);
         assert!(
             reg.is_register(),
             "obtained value cannot be used as register"
         );
-        assert!(
-            val.is_literal(),
-            "obtained value cannot be used as a literal value"
-        );
-        if let (Data::Register(r), Data::LiteralValue(v)) = (reg, val) {
-            self.store_raw_value_to_register(r, v);
+        // Ensure that data is resolved, to prevent setting register to register
+        let literal = self.unpack_data(val);
+        // assert!(
+        //     val.is_literal(),
+        //     "obtained value cannot be used as a literal value"
+        // );
+        if let Data::Register(r) = reg {
+            self.store_raw_value_to_register(r, literal);
         } else {
             panic!("failed to unpack register and its value")
         }
@@ -422,7 +449,14 @@ impl VM {
     }
 
     fn add(&mut self, a: Address, b: Address, c: Address) {
-        debug!("{} add: {} {} {}", &self.current_address, &a, &b, &c);
+        debug!(
+            "{} {}: {} {} {}",
+            &self.current_address,
+            "add".magenta(),
+            &a,
+            &b,
+            &c
+        );
         let reg = pack_raw_value(self.get_value_from_addr(&a));
         let value1 = pack_raw_value(self.get_value_from_addr(&b));
         let value2 = pack_raw_value(self.get_value_from_addr(&c));
@@ -432,7 +466,7 @@ impl VM {
 
     fn add_values(&mut self, reg: Data, v1: Data, v2: Data) {
         trace!(
-            "storing result of add operation on {} and {} to {}",
+            " storing result of add operation on {} and {} to {}",
             v1, v2, reg
         );
 
@@ -440,17 +474,9 @@ impl VM {
             reg.is_register(),
             "first argument value cannot be used as register"
         );
-        assert!(
-            v1.is_literal(),
-            "second argument value cannot be used as a literal value"
-        );
-        assert!(
-            v2.is_literal(),
-            "third value cannot be used as a literal value"
-        );
-        if let (Data::LiteralValue(val1), Data::LiteralValue(val2), Data::Register(r)) =
-            (v1, v2, reg)
-        {
+        let val1 = self.unpack_data(v1);
+        let val2 = self.unpack_data(v2);
+        if let Data::Register(r) = reg {
             self.store_raw_value_to_register(r, (val1 + val2) % MAX);
         } else {
             panic!("cannot unpack values and register for add operation");
@@ -458,7 +484,14 @@ impl VM {
     }
 
     fn eq(&mut self, a: Address, b: Address, c: Address) {
-        debug!("{} eq: {} {} {}", &self.current_address, &a, &b, &c);
+        debug!(
+            "{} {}: {} {} {}",
+            &self.current_address,
+            "eq".magenta(),
+            &a,
+            &b,
+            &c
+        );
         let reg = pack_raw_value(self.get_value_from_addr(&a));
         let value1 = pack_raw_value(self.get_value_from_addr(&b));
         let value2 = pack_raw_value(self.get_value_from_addr(&c));
@@ -472,7 +505,7 @@ impl VM {
 
     fn store_equality(&mut self, reg: Data, v1: Data, v2: Data) -> bool {
         trace!(
-            "storing result of eq operation of {} and {} to {}",
+            " storing result of eq operation of {} and {} to {}",
             v1, v2, reg
         );
         assert!(
@@ -481,7 +514,7 @@ impl VM {
         );
         let val1 = self.unpack_data(v1);
         let val2 = self.unpack_data(v2);
-        trace!("comparing values {} and {}", val1, val2);
+        trace!(" comparing values {} and {}", val1, val2);
         if let Data::Register(r) = reg {
             if val1 == val2 {
                 self.store_raw_value_to_register(r, 1);
@@ -496,28 +529,45 @@ impl VM {
     }
 
     fn push(&mut self, a: Address) {
-        debug!("{} push: {}", &self.current_address, &a);
+        debug!("{} {}: {}", &self.current_address, "push".magenta(), &a);
         let val = self.get_value_from_addr(&a);
-        self.stack.push(val);
+        // I'm not sure wherer I should resolve value in the register or not...
+        // let val = self.get_data_from_addr(a);
+        self.stack.push_back(val);
+        trace!("pushed value {} to stack", val);
         self.step_n(2);
     }
 
     fn pop(&mut self, a: Address) {
-        debug!("{} pop: {}", &self.current_address, &a);
-        let val = self.stack.pop().expect("stack is empty");
-        trace!("popped value {}", val);
+        debug!("{} {}: {}", &self.current_address, "pop".magenta(), &a);
+        let val = self.stack.pop_back().expect("stack is empty");
+        trace!("popped value {} from stack", val);
         self.set_memory_by_address(a, val);
         self.step_n(2);
     }
 
     fn set_memory_by_address(&mut self, a: Address, val: u16) {
-        trace!("setting memory by address {} to {}", &a, val);
-        let ptr: Ptr = (&a).into();
-        self.set_memory(ptr, val);
+        trace!(" setting memory by address {} to {}", &a, val);
+        let r_data = pack_raw_value(self.get_value_from_addr(&a));
+        let v_data = pack_raw_value(val);
+        match r_data {
+            Data::Register(r) => {
+                trace!(
+                    " following mem address and setting register {} to value {}",
+                    r, val
+                );
+                self.set_value_to_register(r_data, v_data);
+            }
+            Data::LiteralValue(_) => {
+                let ptr: Ptr = (&a).into();
+                let raw_value = self.unpack_data(v_data);
+                self.set_memory(ptr, raw_value);
+            }
+        }
     }
     fn set_memory(&mut self, ptr: Ptr, val: u16) {
         trace!(
-            "setting value: {} to memory raw ptr: {}({:#x})",
+            "  setting value: {} to memory raw ptr: {}({:#x})",
             val, ptr, ptr
         );
         assert!(
@@ -543,6 +593,8 @@ impl VM {
                 self.show_state();
                 break;
             }
+            // Debugging 
+            self.show_state();
             cycles += 1;
             let current_val = self.get_value_from_addr(&self.current_address);
             let v = self.get_data(current_val);
@@ -567,6 +619,7 @@ impl VM {
                       push <a> onto the stack
                     */
                     self.push(self.current_address.add(1));
+                    self.show_state();
                 }
                 3 => {
                     /*
@@ -574,7 +627,8 @@ impl VM {
                       remove the top element from the stack and write it into <a>; empty stack = error
                     */
                     self.pop(self.current_address.add(1));
-                //    self.show_state();
+                    self.show_state();
+                    //    self.show_state();
                 }
                 4 => {
                     /*
