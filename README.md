@@ -35,24 +35,32 @@ Just run:
 
 The *challenge.bin* file should be present in the crate directory (your working directory). 
 And then just run: 
+
 > cargo run
 
 Also it is possible to specify the location of the challenge binary file like this:
+
 > cargo run -- --rom ./challenge.bin
 
 For other options run:
+
 > cargo run -- --help
+
 The help is pretty self explanatory
 
 #### Note
 
 It is convenient to have color output for debugging, but it is also very useful to have a pager program, when debugging. 
 To preserve colors in less, while debugging, you can hit this command: 
+
  > CLICOLOR_FORCE=1 RUST_LOG=trace cargo run -- --rom sample.bin 2>&1 | less -R 
+
 It will show you an example of colored output in the _less_ pager. Alos _bat_ works like a charm ;)
 
 
 Good luck, with solving it your way! 
+
+=====================================================================
 
 ## Acknowledgements
 
