@@ -167,9 +167,11 @@ fn decompose_value(value: u16) -> (u8, u8) {
         validate_value(value),
         "value bigger than 32768 + 8 is invalid"
     );
-    let lb: u8 = (value % 8) as u8;
-    let hb: u8 = (value >> 8) as u8;
-    let byte_pair = (lb, hb);
+    // Here was a bug. I should mod by 8 bit max value (256) not by 8
+    let lb: u16 = value % 256 ;
+    let hb: u16 = value >> 8;
+    trace!("  got low byte {:#x} and high byte: {:#x}", lb, hb);
+    let byte_pair: (u8, u8) = (lb as u8, hb as u8);
     trace!(
         "  decompose bytes {:?} ({:#x}, {:#x}) from value {} ({:#x}) ",
         byte_pair, byte_pair.0, byte_pair.1, value, value
@@ -712,6 +714,7 @@ impl VM {
             Data::LiteralValue(_) => {
                 let ptr: Ptr = (&a).into();
                 let raw_value = self.unpack_data(v_data);
+                trace!("setting literal value {} (orig: {}) to memory address {} (Ptr: {})", raw_value, val, a, ptr);
                 self.set_memory(ptr, raw_value);
             }
         }
@@ -794,16 +797,20 @@ impl VM {
         self.set_position(Address::new(addr));
     }
     fn rmem(&mut self, a: Address, b: Address) {
-        debug!("{} {}: {}", &self.current_address, "rmem".magenta(), &a);
-        let val = pack_raw_value(self.get_value_from_addr(&b));
+        debug!( "{} {}: {} {}", &self.current_address, "rmem".magenta(), &a, &b);
+        let val_address = pack_raw_value(self.get_value_from_addr(&b));
         let reg = pack_raw_value(self.get_value_from_addr(&a));
-        self.set_value_to_register(reg, val);
+        let val  = self.get_data_from_addr(Address::new(self.unpack_data(val_address)));
+        trace!("got {} and {} after packing", reg, val);
+        self.set_value_to_register(reg, pack_raw_value(val));
         self.step_n(3);
     }
     fn wmem(&mut self, a: Address, b: Address) {
-        debug!("{} {}: {}", &self.current_address, "wmem".magenta(), &a);
-        let val = self.get_data_from_addr(b);
-        self.set_memory_by_address(a, val);
+        debug!( "{} {}: {} {}", &self.current_address, "wmem".magenta(), &a, &b);
+        let val = self.get_data_from_addr(b); //30000
+        let val_addr = self.get_data_from_addr(a); //20000
+        trace!(" value of b {} value of address from a {}", val, val_addr);
+        self.set_memory_by_address(Address::new(val_addr), val);
         self.step_n(3);
     }
     fn main_loop(&mut self) -> Result<u64, Box<dyn Error>> {

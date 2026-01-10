@@ -1,26 +1,34 @@
 use clap::Parser;
 use log::{debug, trace, warn};
 use std::error::Error;
-use std::fmt::{self, Formatter};
+use std::fmt;
 use std::{
     ffi::OsString,
     fs::{self, File},
     io::{BufRead, BufReader, Read},
     path::PathBuf,
 };
+use colored::control;
+
 #[derive(Parser, Debug)]
 #[command(version, about)]
 struct Args {
     #[arg(short, long, default_value = "./challenge.bin")]
     //#[arg(short, long)]
     rom: String,
-    #[arg(short = 'R', long)]
+    #[arg(short = 'R', long, help = "File with replay commands to run")]
     replay: Option<String>,
+    #[arg(long, default_value = "false", help = "Force color output, even if piped (Works with CLICOLOR_FORCE=1)")]
+    force_color: bool,
 }
 
 pub fn parse_args() -> Result<Configuration, Box<dyn Error>> {
     let args = Args::parse();
     debug!("parsed arguments {:?}", args);
+    if args.force_color {
+        debug!("overriding color output to be always {}", args.force_color);
+        control::set_override(true);
+    }
     let maybe_replay: Option<OsString> = args.replay.map(OsString::from);
     let rom_file: OsString = args.rom.into();
     let mut conf = Configuration::new(rom_file.into(), maybe_replay.map(PathBuf::from));
