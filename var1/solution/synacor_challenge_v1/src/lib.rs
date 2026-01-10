@@ -727,6 +727,7 @@ impl VM {
                                         wmem: 16 a b
                       write the value from <b> into memory at address <a>
                     */
+                    unimplemented!();
                 }
                 17 => {
                     /*
