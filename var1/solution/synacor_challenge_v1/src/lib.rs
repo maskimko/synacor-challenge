@@ -1,9 +1,10 @@
 use colored::Colorize;
-use log::{debug, error, info, trace};
+use log::log_enabled;
+use log::{Level, debug, error, info, trace};
+use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::iter;
-use std::collections::VecDeque;
 
 pub mod config;
 
@@ -221,12 +222,24 @@ enum ArithmeticOperations {
 impl fmt::Display for ArithmeticOperations {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-           ArithmeticOperations::Modulo => write!(f, "%"), 
-           ArithmeticOperations::And => write!(f, "&"), 
-           ArithmeticOperations::Add => write!(f, "+"), 
-           ArithmeticOperations::Multiply => write!(f, "*"), 
-           ArithmeticOperations::Or => write!(f, "|"), 
-           ArithmeticOperations::Not => write!(f, "~"), 
+            ArithmeticOperations::Modulo => write!(f, "%"),
+            ArithmeticOperations::And => write!(f, "&"),
+            ArithmeticOperations::Add => write!(f, "+"),
+            ArithmeticOperations::Multiply => write!(f, "*"),
+            ArithmeticOperations::Or => write!(f, "|"),
+            ArithmeticOperations::Not => write!(f, "~"),
+        }
+    }
+}
+impl ArithmeticOperations {
+    fn get_instruction_name<'a>(&'a self) -> &'a str {
+        match self {
+            ArithmeticOperations::Multiply => "mult",
+            ArithmeticOperations::Add => "add",
+            ArithmeticOperations::And => "and",
+            ArithmeticOperations::Or => "or",
+            ArithmeticOperations::Not => "not",
+            ArithmeticOperations::Modulo => "mod",
         }
     }
 }
@@ -478,46 +491,20 @@ impl VM {
     }
 
     fn add(&mut self, a: Address, b: Address, c: Address) {
-        debug!(
-            "{} {}: {} {} {}",
-            &self.current_address,
-            "add".magenta(),
-            &a,
-            &b,
-            &c
-        );
-        let reg = pack_raw_value(self.get_value_from_addr(&a));
-        let value1 = pack_raw_value(self.get_value_from_addr(&b));
-        let value2 = pack_raw_value(self.get_value_from_addr(&c));
-        self.add_values(reg, value1, value2);
-        self.step_n(4);
+        self.do_arithmetic_operation(a, b, c, ArithmeticOperations::Add);
     }
 
-    fn add_values(&mut self, reg: Data, v1: Data, v2: Data) {
-        trace!(
-            " storing result of add operation on {} and {} to {}",
-            v1, v2, reg
-        );
-
-        assert!(
-            reg.is_register(),
-            "first argument value cannot be used as register"
-        );
-        let val1 = self.unpack_data(v1);
-        let val2 = self.unpack_data(v2);
-        if let Data::Register(r) = reg {
-            self.store_raw_value_to_register(r, (val1 + val2) % MAX);
-        } else {
-            panic!("cannot unpack values and register for add operation");
-        }
-    }
-    
-
-    fn do_arithmetic_on_values(&mut self, reg: Data, v1: Data, v2: Option<Data>, op: ArithmeticOperations) {
+    fn do_arithmetic_on_values(
+        &mut self,
+        reg: Data,
+        v1: Data,
+        v2: Option<Data>,
+        op: ArithmeticOperations,
+    ) {
         // operations add mult mod and or not
         trace!(
-            " storing result of add operation on {} and {:?} to {}",
-            v1, v2, reg
+            "   storing result of {} operation on {} and {:?} to {}",
+           op.get_instruction_name(), v1, v2, reg
         );
 
         assert!(
@@ -526,26 +513,80 @@ impl VM {
         );
         let val1 = self.unpack_data(v1);
         if let Data::Register(r) = reg {
-            let result  = match op {
-                ArithmeticOperations::Add => (val1 + self.unpack_data(v2.expect(format!("second argumemnt for {} operation is required, but None was provided", op).as_str()))) % MAX,
-                ArithmeticOperations::Multiply => (val1 * self.unpack_data(v2.expect(format!("second argumemnt for {} operation is required, but None was provided", op).as_str()))) % MAX,
-                ArithmeticOperations::And => (val1 & self.unpack_data(v2.expect(format!("second argumemnt for {} operation is required, but None was provided", op).as_str()))) % MAX,
-                ArithmeticOperations::Or => (val1 | self.unpack_data(v2.expect(format!("second argumemnt for {} operation is required, but None was provided", op).as_str()))) % MAX,
-                ArithmeticOperations::Not => (!val1 ) % MAX,
-                ArithmeticOperations::Modulo => (val1 % self.unpack_data(v2.expect(format!("second argumemnt for {} operation is required, but None was provided", op).as_str()))) % MAX,
-                
+            let result = match op {
+                ArithmeticOperations::Add => (val1 + self.unpack_data(
+                    v2.expect(
+                        format!(
+                            "second argumemnt for {} operation is required, but None was provided",
+                            op
+                        )
+                        .as_str(),
+                    ),
+                )) % MAX,
+                ArithmeticOperations::Multiply => (val1 * self.unpack_data(
+                    v2.expect(
+                        format!(
+                            "second argumemnt for {} operation is required, but None was provided",
+                            op
+                        )
+                        .as_str(),
+                    ),
+                )) % MAX,
+                ArithmeticOperations::And => (val1 & self.unpack_data(
+                    v2.expect(
+                        format!(
+                            "second argumemnt for {} operation is required, but None was provided",
+                            op
+                        )
+                        .as_str(),
+                    ),
+                )) % MAX,
+                ArithmeticOperations::Or => (val1 | self.unpack_data(
+                    v2.expect(
+                        format!(
+                            "second argumemnt for {} operation is required, but None was provided",
+                            op
+                        )
+                        .as_str(),
+                    ),
+                )) % MAX,
+                ArithmeticOperations::Not => {
+                    trace!(
+                        "   performint bitwise negation operation ~ (!) on {} ({:#b})",
+                        val1, val1
+                    );
+                    let result = (!val1) % MAX; 
+                    trace!("   got negation result {} ({:#b})", result, result);
+                    result
+                }
+                ArithmeticOperations::Modulo => (val1 % self.unpack_data(
+                    v2.expect(
+                        format!(
+                            "second argumemnt for {} operation is required, but None was provided",
+                            op
+                        )
+                        .as_str(),
+                    ),
+                )) % MAX,
             };
+            trace!("   got arithmetic ops result {} {:#x} {:#b}", result, result, result);
             self.store_raw_value_to_register(r, result);
         } else {
             panic!("cannot unpack values and register for add operation");
         }
     }
 
-    fn mult(&mut self, a: Address, b: Address, c: Address) {
+    fn do_arithmetic_operation(
+        &mut self,
+        a: Address,
+        b: Address,
+        c: Address,
+        op: ArithmeticOperations,
+    ) {
         debug!(
             "{} {}: {} {} {}",
             &self.current_address,
-            "mult".magenta(),
+            op.get_instruction_name().magenta(),
             &a,
             &b,
             &c
@@ -553,10 +594,34 @@ impl VM {
         let reg = pack_raw_value(self.get_value_from_addr(&a));
         let value1 = pack_raw_value(self.get_value_from_addr(&b));
         let value2 = pack_raw_value(self.get_value_from_addr(&c));
-        self.do_arithmetic_on_values(reg, value1, Some(value2), ArithmeticOperations::Multiply);
+        self.do_arithmetic_on_values(reg, value1, Some(value2), op);
         self.step_n(4);
     }
-
+    fn mult(&mut self, a: Address, b: Address, c: Address) {
+        self.do_arithmetic_operation(a, b, c, ArithmeticOperations::Multiply);
+    }
+    fn modulo(&mut self, a: Address, b: Address, c: Address) {
+        self.do_arithmetic_operation(a, b, c, ArithmeticOperations::Modulo);
+    }
+    fn and(&mut self, a: Address, b: Address, c: Address) {
+        self.do_arithmetic_operation(a, b, c, ArithmeticOperations::And);
+    }
+    fn or(&mut self, a: Address, b: Address, c: Address) {
+        self.do_arithmetic_operation(a, b, c, ArithmeticOperations::Or);
+    }
+    fn not(&mut self, a: Address, b: Address) {
+        debug!(
+            "{} {}: {} {}",
+            &self.current_address,
+            "not".magenta(),
+            &a,
+            &b
+        );
+        let reg = pack_raw_value(self.get_value_from_addr(&a));
+        let value1 = pack_raw_value(self.get_value_from_addr(&b));
+        self.do_arithmetic_on_values(reg, value1, None, ArithmeticOperations::Not);
+        self.step_n(3);
+    }
 
     fn eq(&mut self, a: Address, b: Address, c: Address) {
         debug!(
@@ -605,9 +670,9 @@ impl VM {
 
     fn push(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "push".magenta(), &a);
-        // Here used to be a stack bug. 
+        // Here used to be a stack bug.
         // IMPORTANT! Befor pushing data to stack the data should be resolved from registers!
-         let val = self.get_data_from_addr(a);
+        let val = self.get_data_from_addr(a);
         self.stack.push_back(val);
         trace!("pushed value {} to stack", val);
         self.step_n(2);
@@ -712,8 +777,10 @@ impl VM {
                 self.show_state();
                 break;
             }
-            // Debugging 
-            self.show_state();
+            if log_enabled!(Level::Trace) {
+                // Debugging
+                self.show_state();
+            }
             cycles += 1;
             let current_val = self.get_value_from_addr(&self.current_address);
             let v = self.get_data(current_val);
@@ -766,7 +833,7 @@ impl VM {
                         self.current_address.add(1),
                         self.current_address.add(2),
                         self.current_address.add(3),
-                        );
+                    );
                 }
                 6 => {
                     /*
@@ -805,7 +872,7 @@ impl VM {
                                         mult: 10 a b c
                       store into <a> the product of <b> and <c> (modulo 32768)
                     */
-                    
+
                     self.mult(
                         self.current_address.add(1),
                         self.current_address.add(2),
@@ -817,28 +884,40 @@ impl VM {
                                         mod: 11 a b c
                       store into <a> the remainder of <b> divided by <c>
                     */
-                    unimplemented!();
+                    self.modulo(
+                        self.current_address.add(1),
+                        self.current_address.add(2),
+                        self.current_address.add(3),
+                    );
                 }
                 12 => {
                     /*
                                         and: 12 a b c
                       stores into <a> the bitwise and of <b> and <c>
                     */
-                    unimplemented!();
+                    self.and(
+                        self.current_address.add(1),
+                        self.current_address.add(2),
+                        self.current_address.add(3),
+                    );
                 }
                 13 => {
                     /*
                                         or: 13 a b c
                       stores into <a> the bitwise or of <b> and <c>
                     */
-                    unimplemented!();
+                    self.or(
+                        self.current_address.add(1),
+                        self.current_address.add(2),
+                        self.current_address.add(3),
+                    );
                 }
                 14 => {
                     /*
                                         not: 14 a b
                       stores 15-bit bitwise inverse of <b> in <a>
                     */
-                    unimplemented!();
+                    self.not(self.current_address.add(1), self.current_address.add(2));
                 }
                 15 => {
                     /*
