@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::iter;
+use std::io::{self, Read};
 
 pub mod config;
 
@@ -457,11 +458,6 @@ impl VM {
         );
         let raw_value = self.get_value_from_addr(&b);
         let val = pack_raw_value(raw_value);
-        // This panics for some reason... 
-        // assert!(
-        //     val.is_literal(),
-        //     "obtained value cannot be used as a literal value"
-        // );
         self.set_value_to_register(reg, val);
         self.step_n(3);
     }
@@ -813,6 +809,25 @@ impl VM {
         self.set_memory_by_address(Address::new(val_addr), val);
         self.step_n(3);
     }
+    /// This function is an implementation of the 'in' operational instruction
+    fn read_in(&mut self, a: Address){
+        debug!("{} {}: {}", &self.current_address, "in".magenta(), &a);
+        let mut buf : [u8;1] = [0];
+        match io::stdin().read_exact(&mut buf) {
+            Ok(()) => {
+               let c :u8  = buf[0];
+                let reg = pack_raw_value(self.get_value_from_addr(&a));
+                let val = pack_raw_value(c.into());
+                self.set_value_to_register(reg, val );
+            }, 
+            Err(e) => {
+                error!("failed to read from stdin. Error: {}", e);
+                panic!("failed on stdin reading");
+            }
+        }
+        self.step_n(2);
+        
+    }
     fn main_loop(&mut self) -> Result<u64, Box<dyn Error>> {
         trace!("starting the main loop");
         let mut cycles: u64 = 0;
@@ -1004,7 +1019,7 @@ impl VM {
                         in: 20 a
                       read a character from the terminal and write its ascii code to <a>; it can be assumed that once input starts, it will continue until a newline is encountered; this means that you can safely read whole lines from the keyboard and trust that they will be fully read
                     */
-                    unimplemented!();
+                    self.read_in(self.current_address.add(1));
                 }
                 21 => {
                     /*
