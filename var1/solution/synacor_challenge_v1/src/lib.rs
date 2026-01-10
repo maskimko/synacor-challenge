@@ -118,6 +118,15 @@ impl fmt::Display for Data {
         }
     }
 }
+impl fmt::Debug for Data {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Data::Register(r) => write!(f, "register[{}]", r),
+            Data::LiteralValue(v) => write!(f, "value[{}]", v),
+        }
+    }
+}
+
 /// This function composes u16 number from little endian byte pair of low byte and high byte
 fn compose_value(byte_pair: (u8, u8)) -> u16 {
     // - all math is modulo 32768; 32758 + 15 => 5
@@ -199,6 +208,27 @@ fn unpack_data_to_raw_address(d: Data) -> u16 {
         "value bigger than 32768 + 8 is invalid"
     );
     raw
+}
+
+enum ArithmeticOperations {
+    Add,
+    Multiply,
+    Modulo,
+    And,
+    Or,
+    Not,
+}
+impl fmt::Display for ArithmeticOperations {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+           ArithmeticOperations::Modulo => write!(f, "%"), 
+           ArithmeticOperations::And => write!(f, "&"), 
+           ArithmeticOperations::Add => write!(f, "+"), 
+           ArithmeticOperations::Multiply => write!(f, "*"), 
+           ArithmeticOperations::Or => write!(f, "|"), 
+           ArithmeticOperations::Not => write!(f, "~"), 
+        }
+    }
 }
 
 impl VM {
@@ -481,6 +511,52 @@ impl VM {
             panic!("cannot unpack values and register for add operation");
         }
     }
+    
+
+    fn do_arithmetic_on_values(&mut self, reg: Data, v1: Data, v2: Option<Data>, op: ArithmeticOperations) {
+        // operations add mult mod and or not
+        trace!(
+            " storing result of add operation on {} and {:?} to {}",
+            v1, v2, reg
+        );
+
+        assert!(
+            reg.is_register(),
+            "first argument value cannot be used as register"
+        );
+        let val1 = self.unpack_data(v1);
+        if let Data::Register(r) = reg {
+            let result  = match op {
+                ArithmeticOperations::Add => (val1 + self.unpack_data(v2.expect(format!("second argumemnt for {} operation is required, but None was provided", op).as_str()))) % MAX,
+                ArithmeticOperations::Multiply => (val1 * self.unpack_data(v2.expect(format!("second argumemnt for {} operation is required, but None was provided", op).as_str()))) % MAX,
+                ArithmeticOperations::And => (val1 & self.unpack_data(v2.expect(format!("second argumemnt for {} operation is required, but None was provided", op).as_str()))) % MAX,
+                ArithmeticOperations::Or => (val1 | self.unpack_data(v2.expect(format!("second argumemnt for {} operation is required, but None was provided", op).as_str()))) % MAX,
+                ArithmeticOperations::Not => (!val1 ) % MAX,
+                ArithmeticOperations::Modulo => (val1 % self.unpack_data(v2.expect(format!("second argumemnt for {} operation is required, but None was provided", op).as_str()))) % MAX,
+                
+            };
+            self.store_raw_value_to_register(r, result);
+        } else {
+            panic!("cannot unpack values and register for add operation");
+        }
+    }
+
+    fn mult(&mut self, a: Address, b: Address, c: Address) {
+        debug!(
+            "{} {}: {} {} {}",
+            &self.current_address,
+            "mult".magenta(),
+            &a,
+            &b,
+            &c
+        );
+        let reg = pack_raw_value(self.get_value_from_addr(&a));
+        let value1 = pack_raw_value(self.get_value_from_addr(&b));
+        let value2 = pack_raw_value(self.get_value_from_addr(&c));
+        self.do_arithmetic_on_values(reg, value1, Some(value2), ArithmeticOperations::Multiply);
+        self.step_n(4);
+    }
+
 
     fn eq(&mut self, a: Address, b: Address, c: Address) {
         debug!(
@@ -583,6 +659,50 @@ impl VM {
         self.memory[ptr as usize + 1] = hb;
     }
 
+    fn gt(&mut self, a: Address, b: Address, c: Address) {
+        debug!(
+            "{} {}: {} {} {}",
+            &self.current_address,
+            "gt".magenta(),
+            &a,
+            &b,
+            &c
+        );
+        let reg = pack_raw_value(self.get_value_from_addr(&a));
+        let value1 = pack_raw_value(self.get_value_from_addr(&b));
+        let value2 = pack_raw_value(self.get_value_from_addr(&c));
+        if self.store_greater_than(reg, value1, value2) {
+            trace!("successfully stored positive result of comparison");
+        } else {
+            trace!("successfully stored negative result of comparison");
+        }
+        self.step_n(4);
+    }
+
+    fn store_greater_than(&mut self, reg: Data, v1: Data, v2: Data) -> bool {
+        trace!(
+            " storing result of gt operation of {} and {} to {}",
+            v1, v2, reg
+        );
+        assert!(
+            reg.is_register(),
+            "first argument value cannot be used as register"
+        );
+        let val1 = self.unpack_data(v1);
+        let val2 = self.unpack_data(v2);
+        trace!(" comparing values {} and {}", val1, val2);
+        if let Data::Register(r) = reg {
+            if val1 > val2 {
+                self.store_raw_value_to_register(r, 1);
+                true
+            } else {
+                self.store_raw_value_to_register(r, 0);
+                false
+            }
+        } else {
+            panic!("cannot unpack values and register for add operation");
+        }
+    }
     fn main_loop(&mut self) -> Result<u64, Box<dyn Error>> {
         trace!("starting the main loop");
         let mut cycles: u64 = 0;
@@ -642,7 +762,11 @@ impl VM {
                     gt: 5 a b c
                       set <a> to 1 if <b> is greater than <c>; set it to 0 otherwise
                     */
-                    unimplemented!();
+                    self.gt(
+                        self.current_address.add(1),
+                        self.current_address.add(2),
+                        self.current_address.add(3),
+                        );
                 }
                 6 => {
                     /*
@@ -681,7 +805,12 @@ impl VM {
                                         mult: 10 a b c
                       store into <a> the product of <b> and <c> (modulo 32768)
                     */
-                    unimplemented!();
+                    
+                    self.mult(
+                        self.current_address.add(1),
+                        self.current_address.add(2),
+                        self.current_address.add(3),
+                    );
                 }
                 11 => {
                     /*
