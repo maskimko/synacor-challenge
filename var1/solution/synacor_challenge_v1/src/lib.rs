@@ -4,10 +4,15 @@ use log::{Level, debug, error, info, trace};
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
+use std::fs::File;
+use std::path::{Path, PathBuf};
 use std::iter;
 
+use crate::aux::Commander;
+
 pub mod config;
+mod aux;
 
 //const MAX: u16 = 32768; // The same as 1 << 15
 const MAX: u16 = 1 << 15;
@@ -20,6 +25,12 @@ struct VM {
     // - all numbers are unsigned integers 0..32767 (15-bit)
     // - all math is modulo 32768; 32758 + 15 => 5
     current_address: Address, // internal execution pointer
+
+    // Auxiliary stuff
+    replay_commands: Option<Vec<String>>,
+    commands_history: Vec<String>,
+    record_output: Option<PathBuf>,
+    current_command_buf: String, //used to store user input until the newline character
 }
 
 /*
@@ -246,6 +257,54 @@ impl ArithmeticOperations {
     }
 }
 
+impl<'b> aux::Commander<'b> for VM {
+    fn show_state(&self) {
+        trace!("showing VM state to stderr");
+        eprintln!("{}",self.get_state());
+    }
+    fn dump_state(&self, p: &std::path::Path)  -> Result<(), std::io::Error> {
+        trace!("dumping VM state to {}", p.display());
+        std::fs::write(p, self.get_state())
+    }
+    fn dump_memory(&self, p: &std::path::Path) -> Result<(), std::io::Error> {
+        trace!("dumping VM memory to {}", p.display());
+        std::fs::write(p, self.memory.as_ref())
+    }
+    fn record_output(&mut self, p: &std::path::Path)  -> Result<(), Box<dyn Error>> {
+        if self.record_output.is_some() {
+            return Err(format!("recording is already enabled to another file").into());
+        }
+        trace!("starting recording VM output to {}", p.display());
+        
+        self.record_output = Some(p.to_path_buf());
+        Ok(())
+    }
+    fn commands_history(&self) -> &[String] {
+        trace!("returning {} elements of command history", self.commands_history.len());
+        self.commands_history.as_ref()
+    }
+    fn get_replay_commands(&self) -> Vec<String>{
+        match &self.replay_commands {
+            Some(rc) => rc.clone(),
+            None => vec![],
+        }
+    }
+    fn is_recording_active(&self) -> bool {
+        self.record_output.is_some()
+    }
+    fn save_commands_history(&self, p : &std::path::Path) -> Result<(), std::io::Error> {
+        trace!("saving command history to {}", p.display());
+        let mut counter: u16 =0;
+        let mut file = File::create(p)?;
+        self.commands_history().iter().for_each(|cmd|  {file.write(cmd.as_bytes()); counter +=1;} );
+        trace!("saved {} commands of history", counter);
+        Ok(())
+    }
+    fn process_command(&mut self, command: &str) -> Result<(),Box<dyn Error>> {
+        unimplemented!();
+    }
+}
+
 impl VM {
     fn new() -> Self {
         VM {
@@ -256,52 +315,58 @@ impl VM {
             current_address: Address::default(),
         }
     }
-    fn show_state(&self) {
-        eprintln!("***         Virtual Machine State         ***");
-        eprintln!("{}", iter::repeat("=").take(44).collect::<String>());
-        eprintln!("{:<9}: {}", "halt", self.halt);
-        eprintln!("{:<9}: {}", "rom size", self.memory.len());
-        self.show_registers(1);
-        self.show_stack(1);
-        eprintln!("{:<9}: {}", "position", self.current_address);
-        eprintln!("=============================================");
+    fn get_state(&self) -> String {
+        let mut state = String::new();
+        state.push_str(&format!("***         Virtual Machine State         ***"));
+        state.push_str(&format!("{}", iter::repeat("=").take(44).collect::<String>()));
+        state.push_str(&format!("{:<9}: {}", "halt", self.halt));
+        state.push_str(&format!("{:<9}: {}", "rom size", self.memory.len()));
+        state.push_str(&self.get_registers_info(1));
+        state.push_str(&self.get_stack_info(1));
+        state.push_str(&format!("{:<9}: {}", "position", self.current_address));
+        state.push_str(&format!("============================================="));
+        state
     }
-    fn show_registers(&self, indent: usize) {
+    fn  get_registers_info(&self, indent: usize) -> String{
+        let mut registers = String::new();
         let indentation = iter::repeat("  ").take(indent).collect::<String>();
-        eprintln!("{:<9}:", "registers");
-        eprintln!(
+        registers.push_str(&format!("{:<9}:", "registers"));
+        registers.push_str(&format!(
             "{}{}",
             indentation,
             iter::repeat("-").take(44 - indent).collect::<String>()
-        );
+        ));
         self.registers
             .iter()
             .enumerate()
-            .for_each(|(n, r)| eprintln!("{}{}{}: {:<10}", indentation, "reg ", n, r));
-        eprintln!(
+            .for_each(|(n, r)| registers.push_str(&format!("{}{}{}: {:<10}", indentation, "reg ", n, r)));
+        registers.push_str(&format!(
             "{}{}",
             indentation,
             iter::repeat("-").take(44 - indent).collect::<String>()
-        );
+        ));
+        registers
     }
-    fn show_stack(&self, indent: usize) {
+    fn get_stack_info(&self, indent: usize) -> String {
+        let mut stack = String::new();
         let indentation = iter::repeat("  ").take(indent).collect::<String>();
-        eprintln!("{:<9}  (size: {:3}):", "stack", self.stack.len());
-        eprintln!(
+        stack.push_str(&format!("{:<9}  (size: {:3}):", "stack", self.stack.len()));
+        stack.push_str(&format!(
             "{}{}",
             indentation,
             iter::repeat("+").take(44 - indent).collect::<String>()
-        );
+        ));
         self.stack
             .iter()
             .enumerate()
             .rev()
-            .for_each(|(n, r)| eprintln!("{}[{}: {:<10}]", indentation, n, r));
-        eprintln!(
+            .for_each(|(n, r)| stack.push_str(&format!("{}[{}: {:<10}]", indentation, n, r)));
+        stack.push_str(&format!(
             "{}{}",
             indentation,
             iter::repeat("+").take(44 - indent).collect::<String>()
-        );
+        ));
+        stack
     }
     fn new_from_rom(rom: Vec<u8>) -> Self {
         let mut vm = Self::new();
@@ -830,6 +895,7 @@ impl VM {
         self.set_memory_by_address(Address::new(val_addr), val);
         self.step_n(3);
     }
+    fn grab_input()
     /// This function is an implementation of the 'in' operational instruction
     fn read_in(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "in".magenta(), &a);
