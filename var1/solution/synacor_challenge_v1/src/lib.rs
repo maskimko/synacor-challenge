@@ -529,8 +529,8 @@ impl VM {
 
     fn push(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "push".magenta(), &a);
-        //let val = self.get_value_from_addr(&a);
-        // I'm not sure wherer I should resolve value in the register or not...
+        // Here used to be a stack bug. 
+        // IMPORTANT! Befor pushing data to stack the data should be resolved from registers!
          let val = self.get_data_from_addr(a);
         self.stack.push_back(val);
         trace!("pushed value {} to stack", val);
