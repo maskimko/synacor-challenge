@@ -13,4 +13,12 @@ The goal is to collect all the codes, meanwhile solving quizes, mazes, puzzles, 
 
 Good luck, with solving it your way! 
 
+## Acknowledgements
+
+### Dave Eddy 
+Thank you for inspiring me to solve this challenge on your Christmas stream! 
+You can reach out to him by [his personal web page](https://www.daveeddy.com/)
+
+### eduard Mandy
+His [github repo](https://github.com/mandyedi/synacor-challenge), is the first version of the challenge I found. 
 
