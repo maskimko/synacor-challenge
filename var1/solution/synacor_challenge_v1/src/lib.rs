@@ -463,6 +463,8 @@ impl VM {
         self.set_value_to_register(reg, val);
         self.step_n(3);
     }
+    /// This method sets data value of the second argument to the register specified in first
+    /// argument
     fn set_value_to_register(&mut self, reg: Data, val: Data) {
         trace!("setting value: {} to register: {}", val, reg);
         assert!(
@@ -523,7 +525,7 @@ impl VM {
                         .as_str(),
                     ),
                 )) % MAX,
-                ArithmeticOperations::Multiply => (val1 * self.unpack_data(
+                ArithmeticOperations::Multiply => (val1 as u64 *   self.unpack_data(
                     v2.expect(
                         format!(
                             "second argumemnt for {} operation is required, but None was provided",
@@ -531,7 +533,7 @@ impl VM {
                         )
                         .as_str(),
                     ),
-                )) % MAX,
+                ) as u64 ) as u16 % MAX,
                 ArithmeticOperations::And => (val1 & self.unpack_data(
                     v2.expect(
                         format!(
@@ -668,19 +670,28 @@ impl VM {
         }
     }
 
+    fn push_to_stack(&mut self, val: u16) {
+        trace!("    pushing {} to stack", val);
+        self.stack.push_back(val);
+    }
+    fn pop_from_stack(&mut self) -> u16 {
+        let val = self.stack.pop_back().expect("stack is empty");
+        trace!("    popped value {} from stack", val);
+        val
+    }
     fn push(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "push".magenta(), &a);
         // Here used to be a stack bug.
         // IMPORTANT! Befor pushing data to stack the data should be resolved from registers!
         let val = self.get_data_from_addr(a);
-        self.stack.push_back(val);
+        self.push_to_stack(val);
         trace!("pushed value {} to stack", val);
         self.step_n(2);
     }
 
     fn pop(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "pop".magenta(), &a);
-        let val = self.stack.pop_back().expect("stack is empty");
+        let val = self.pop_from_stack();
         trace!("popped value {} from stack", val);
         self.set_memory_by_address(a, val);
         self.step_n(2);
@@ -767,6 +778,33 @@ impl VM {
         } else {
             panic!("cannot unpack values and register for add operation");
         }
+    }
+    fn call(&mut self, a: Address) {
+        debug!("{} {}: {}", &self.current_address, "call".magenta(), &a);
+        let next_addr = a.next();
+
+        trace!("got address {} and push it to stack", next_addr);
+        self.push_to_stack(next_addr.0);
+        let pos = Address::new(self.get_data_from_addr(a));
+        self.set_position(pos);
+    }
+    fn ret(&mut self) {
+        debug!("{} {}:", &self.current_address, "ret".magenta());
+        let addr = self.pop_from_stack();
+        self.set_position(Address::new(addr));
+    }
+    fn rmem(&mut self, a: Address, b: Address) {
+        debug!("{} {}: {}", &self.current_address, "rmem".magenta(), &a);
+        let val = pack_raw_value(self.get_value_from_addr(&b));
+        let reg = pack_raw_value(self.get_value_from_addr(&a));
+        self.set_value_to_register(reg, val);
+        self.step_n(3);
+    }
+    fn wmem(&mut self, a: Address, b: Address) {
+        debug!("{} {}: {}", &self.current_address, "wmem".magenta(), &a);
+        let val = self.get_data_from_addr(b);
+        self.set_memory_by_address(a, val);
+        self.step_n(3);
     }
     fn main_loop(&mut self) -> Result<u64, Box<dyn Error>> {
         trace!("starting the main loop");
@@ -924,28 +962,28 @@ impl VM {
                                         rmem: 15 a b
                       read memory at address <b> and write it to <a>
                     */
-                    unimplemented!();
+                    self.rmem(self.current_address.add(1), self.current_address.add(2));
                 }
                 16 => {
                     /*
                                         wmem: 16 a b
                       write the value from <b> into memory at address <a>
                     */
-                    unimplemented!();
+                    self.wmem(self.current_address.add(1), self.current_address.add(2));
                 }
                 17 => {
                     /*
                         call: 17 a
                       write the address of the next instruction to the stack and jump to <a>
                     */
-                    unimplemented!();
+                    self.call(self.current_address.add(1));
                 }
                 18 => {
                     /*
                         ret: 18
                       remove the top element from the stack and jump to it; empty stack = halt
                     */
-                    unimplemented!();
+                    self.ret();
                 }
                 19 => {
                     /*
