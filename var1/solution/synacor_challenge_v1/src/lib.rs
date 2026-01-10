@@ -1,10 +1,9 @@
 use colored::Colorize;
 use log::{debug, error, info, trace};
 use std::error::Error;
-use std::fmt::{self, Formatter};
+use std::fmt;
 use std::iter;
 use std::collections::VecDeque;
-use std::os::raw;
 
 pub mod config;
 
@@ -65,7 +64,7 @@ impl Address {
 }
 
 impl fmt::Display for Address {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ptr: Ptr = self.into();
         write!(f, "addr[{} ({:#x})]", self.0, ptr)
     }
@@ -112,7 +111,7 @@ impl Data {
 }
 
 impl fmt::Display for Data {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Data::Register(r) => write!(f, "register[{}]", r),
             Data::LiteralValue(v) => write!(f, "value[{}]", v),
@@ -128,7 +127,7 @@ fn compose_value(byte_pair: (u8, u8)) -> u16 {
     // Let's try not perform mod operation on this level
     // let value = (hb + lb) % MAX;
     // This was a bug preventing from getting register number!
-    // The real mod '%' operation will happen at 'get_data_from_raw_value' function
+    // The real mod '%' operation will happen at 'pack_raw_value' function
     let value = hb + lb;
     trace!(
         "  compose value {} ({:#x}) from bytes {:?} ({:#x}, {:#x})",
@@ -530,9 +529,9 @@ impl VM {
 
     fn push(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "push".magenta(), &a);
-        let val = self.get_value_from_addr(&a);
+        //let val = self.get_value_from_addr(&a);
         // I'm not sure wherer I should resolve value in the register or not...
-        // let val = self.get_data_from_addr(a);
+         let val = self.get_data_from_addr(a);
         self.stack.push_back(val);
         trace!("pushed value {} to stack", val);
         self.step_n(2);
@@ -619,7 +618,6 @@ impl VM {
                       push <a> onto the stack
                     */
                     self.push(self.current_address.add(1));
-                    self.show_state();
                 }
                 3 => {
                     /*
@@ -627,8 +625,6 @@ impl VM {
                       remove the top element from the stack and write it into <a>; empty stack = error
                     */
                     self.pop(self.current_address.add(1));
-                    self.show_state();
-                    //    self.show_state();
                 }
                 4 => {
                     /*
