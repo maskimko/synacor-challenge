@@ -410,4 +410,50 @@ The self-test completion code is: jGxkvqlwrGNE"#);
             }
         }
     }
+    // TODO: write tests for this output
+    /* 
+ == Foothills ==
+You find yourself standing at the base of an enormous mountain.  At its base to the north, there is a massive doorway.  A sign nearby reads "Keep out!  Definitely no treasure within!"
+
+Things of interest here:
+- tablet
+
+There are 2 exits:
+- doorway
+- south
+
+What do you do?
+take tablet
+got message title
+got exit title
+
+
+Taken.
+
+What do you do?
+look tablet
+
+
+The tablet seems appropriate for use as a writing surface but is unfortunately blank.  Perhaps you should USE it as a writing surface...
+
+What do you do?
+use tablet
+
+
+You find yourself writing "QDcZQJqVCzKL" on the tablet.  Perhaps it's some kind of code?
+
+
+What do you do?
+go doorway
+
+
+== Dark cave ==
+This seems to be the mouth of a deep cave.  As you peer north into the darkness, you think you hear the echoes of bats deeper within.
+
+There are 2 exits:
+- north
+- south
+
+What do you do?
+*/
 }
