@@ -57,6 +57,24 @@ To preserve colors in less, while debugging, you can hit this command:
 
 It will show you an example of colored output in the _less_ pager. Alos _bat_ works like a charm ;)
 
+### VM commands
+
+There is a support of 'slash' commands now.
+
+You can perform various actions on VM, which are not part of the challenge.bin program. VM will treat those commands differently.
+You can check the _/help_ command for reference.
+```
+What do you do?
+/help
+*** Available slash '/' commands: ***
+/help - show this help
+/show_state - show state of the VM
+/dump_state - save VM state information to file
+/dump_memory - save VM RAM to file
+/show_history - show commands history
+/save_history - save commands history to file
+/record_output - start output recording
+```
 
 Good luck, with solving it your way! 
 

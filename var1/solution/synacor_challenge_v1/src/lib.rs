@@ -146,7 +146,7 @@ fn print_slash_command_help() {
     eprintln!("/help - show this help");
     eprintln!("/show_state - show state of the VM");
     eprintln!("/dump_state - save VM state information to file");
-    eprintln!("/dump_memoty - save VM RAM to file");
+    eprintln!("/dump_memory - save VM RAM to file");
     eprintln!("/show_history - show commands history");
     eprintln!("/save_history - save commands history to file");
     eprintln!("/record_output - start output recording");
