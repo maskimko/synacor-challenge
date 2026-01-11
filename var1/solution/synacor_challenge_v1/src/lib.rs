@@ -1,12 +1,12 @@
 use colored::Colorize;
-use log::log_enabled;
+use log::{log_enabled, warn};
 use log::{Level, debug, error, info, trace};
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::iter;
 
 use crate::aux::Commander;
@@ -140,6 +140,13 @@ impl fmt::Debug for Data {
     }
 }
 
+fn print_slash_command_help() {
+    eprintln!("*** Available slash '/' commands: ***");
+    eprintln!("/help - show this help");
+    eprintln!("/show_state - show state of the VM");
+
+}
+
 /// This function composes u16 number from little endian byte pair of low byte and high byte
 fn compose_value(byte_pair: (u8, u8)) -> u16 {
     // - all math is modulo 32768; 32758 + 15 => 5
@@ -171,6 +178,11 @@ fn compose_value(byte_pair: (u8, u8)) -> u16 {
     );
     value
 }
+
+fn char_is_printable(c: char) -> bool {
+ c as u8 >= 32 && c as u8 <= 126
+}
+
 /// This function decomposes u16 number to the little endian byte pair of low byte and high byte
 fn decompose_value(value: u16) -> (u8, u8) {
     // - all math is modulo 32768; 32758 + 15 => 5
@@ -301,7 +313,18 @@ impl<'b> aux::Commander<'b> for VM {
         Ok(())
     }
     fn process_command(&mut self, command: &str) -> Result<(),Box<dyn Error>> {
-        unimplemented!();
+        debug!("processing command {}", self.current_command_buf.as_str());
+        if command.starts_with("/") {
+            trace!("processing slash '/' command");
+            match command.to_lowercase().as_str() {
+                "/help" => print_slash_command_help(),
+                "/show_state" => self.show_state(),
+                _ =>  {
+        return Err("not implemented yet".into());
+                }
+             }
+        } 
+        Ok(())
     }
 }
 
@@ -313,35 +336,41 @@ impl VM {
             registers: [0; 8],
             stack: VecDeque::new(),
             current_address: Address::default(),
+            commands_history: vec![],
+            current_command_buf: String::new(),
+            record_output: None,
+    replay_commands: None,
         }
     }
     fn get_state(&self) -> String {
         let mut state = String::new();
-        state.push_str(&format!("***         Virtual Machine State         ***"));
-        state.push_str(&format!("{}", iter::repeat("=").take(44).collect::<String>()));
-        state.push_str(&format!("{:<9}: {}", "halt", self.halt));
-        state.push_str(&format!("{:<9}: {}", "rom size", self.memory.len()));
+        state.push_str(&format!("***         Virtual Machine State         ***\n"));
+        state.push_str(&format!("{}\n", iter::repeat("=").take(44).collect::<String>()));
+        state.push_str(&format!("{:<9}: {}\n", "halt", self.halt));
+        state.push_str(&format!("{:<9}: {}\n", "rom size", self.memory.len()));
         state.push_str(&self.get_registers_info(1));
         state.push_str(&self.get_stack_info(1));
-        state.push_str(&format!("{:<9}: {}", "position", self.current_address));
-        state.push_str(&format!("============================================="));
+        state.push_str(&format!("{:<9}: {}\n", "position", self.current_address));
+        state.push_str(&format!("{}\n", iter::repeat("_").take(44).collect::<String>()));
+        state.push_str(&format!("{:<9}: {}\n", "# to replay", self.replay_commands.clone().map_or("N/A".to_string(), |v| v.iter().len().to_string())) );
+        state.push_str(&format!("{:<9}: {}\n", "record out", self.record_output.clone().map_or("N/A".to_string(), |p| p.display().to_string())));
+        state.push_str(&format!("{:<9}: {}\n", "# cmd. hist", self.commands_history.len()));
+        state.push_str(&format!("=============================================\n"));
         state
     }
     fn  get_registers_info(&self, indent: usize) -> String{
         let mut registers = String::new();
         let indentation = iter::repeat("  ").take(indent).collect::<String>();
-        registers.push_str(&format!("{:<9}:", "registers"));
-        registers.push_str(&format!(
-            "{}{}",
+        registers.push_str(&format!("{:<9}:\n", "registers"));
+        registers.push_str(&format!( "{}{}\n",
             indentation,
             iter::repeat("-").take(44 - indent).collect::<String>()
         ));
         self.registers
             .iter()
             .enumerate()
-            .for_each(|(n, r)| registers.push_str(&format!("{}{}{}: {:<10}", indentation, "reg ", n, r)));
-        registers.push_str(&format!(
-            "{}{}",
+            .for_each(|(n, r)| registers.push_str(&format!("{}{}{}: {:<10}\n", indentation, "reg ", n, r)));
+        registers.push_str(&format!( "{}{}\n",
             indentation,
             iter::repeat("-").take(44 - indent).collect::<String>()
         ));
@@ -350,9 +379,8 @@ impl VM {
     fn get_stack_info(&self, indent: usize) -> String {
         let mut stack = String::new();
         let indentation = iter::repeat("  ").take(indent).collect::<String>();
-        stack.push_str(&format!("{:<9}  (size: {:3}):", "stack", self.stack.len()));
-        stack.push_str(&format!(
-            "{}{}",
+        stack.push_str(&format!("{:<9}  (size: {:3}):\n", "stack", self.stack.len()));
+        stack.push_str(&format!( "{}{}\n",
             indentation,
             iter::repeat("+").take(44 - indent).collect::<String>()
         ));
@@ -360,9 +388,8 @@ impl VM {
             .iter()
             .enumerate()
             .rev()
-            .for_each(|(n, r)| stack.push_str(&format!("{}[{}: {:<10}]", indentation, n, r)));
-        stack.push_str(&format!(
-            "{}{}",
+            .for_each(|(n, r)| stack.push_str(&format!("{}[{}: {:<10}]\n", indentation, n, r)));
+        stack.push_str(&format!( "{}{}\n",
             indentation,
             iter::repeat("+").take(44 - indent).collect::<String>()
         ));
@@ -372,6 +399,9 @@ impl VM {
         let mut vm = Self::new();
         vm.load_rom(rom);
         vm
+    }
+    fn new_from_rom_with_options(rom: Vec<u8>, replay_commands: Option<Vec<String>>, record_output: Option<PathBuf>) -> Self {
+         VM{ replay_commands, record_output  ,..Self::new_from_rom(rom)}
     }
     fn load_rom(&mut self, rom: Vec<u8>) {
         debug!("loading program of {} bytes into memory", rom.len());
@@ -895,7 +925,25 @@ impl VM {
         self.set_memory_by_address(Address::new(val_addr), val);
         self.step_n(3);
     }
-    fn grab_input()
+    fn store_command_to_history(&mut self) {
+        debug!("storing command {} to command history", self.current_command_buf.as_str());
+let command = self.current_command_buf.clone();
+        if let Err(process_error)  = self.process_command(&command) {
+            warn!("processing command returned an error: {}", process_error);
+        }
+        self.commands_history.push(command);
+        self.current_command_buf.clear();
+        debug!("history size now is {}", self.commands_history.len());
+    }
+    fn grab_input(&mut self, c: char) {
+        match c {
+            '\n' => self.store_command_to_history(),
+            c if char_is_printable(c) => self.current_command_buf.push(c as char),
+            _ => { 
+                warn!("trying to store unprintable character! This should never happen!"); 
+        },
+        }
+    }
     /// This function is an implementation of the 'in' operational instruction
     fn read_in(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "in".magenta(), &a);
@@ -906,6 +954,7 @@ impl VM {
                 let reg = pack_raw_value(self.get_value_from_addr(&a));
                 let val = pack_raw_value(c.into());
                 self.set_value_to_register(reg, val);
+                self.grab_input(c as char);
             }
             Err(e) => {
                 error!("failed to read from stdin. Error: {}", e);
@@ -1186,7 +1235,7 @@ pub fn run(config: config::Configuration) -> Result<(), Box<dyn Error>> {
     }
     trace!("configuration has been successfully validated");
     let (rom, replay) = config.rom_n_replay();
-    let mut vm = VM::new_from_rom(rom);
+    let mut vm = VM::new_from_rom_with_options(rom,replay, Some(PathBuf::from("challenge.out")));
     let cycles = vm.main_loop()?;
     debug!("VM exited after completing {} cycles", cycles);
     Ok(())

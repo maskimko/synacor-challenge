@@ -149,7 +149,10 @@ impl Configuration {
         self.replay_commands.clone()
     }
 
-    pub fn rom_n_replay(self) -> (Vec<u8>, Vec<String>) {
-        (self.rom, self.replay_commands)
+    pub fn rom_n_replay(self) -> (Vec<u8>, Option<Vec<String>>) {
+        if self.replay_commands.is_empty() {
+            (self.rom, None)
+        } else {
+        (self.rom, Some(self.replay_commands)) }
     }
 }
