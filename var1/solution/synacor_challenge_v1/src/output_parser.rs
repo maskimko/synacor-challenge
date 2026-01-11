@@ -1,17 +1,18 @@
-use log::{error, trace};
+use log::{trace, debug};
 use regex::Regex;
 use std::error::Error;
-struct OuputAnalyzer<'a> {
+pub struct OuputAnalyzer<'a> {
     response: &'a str,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct ResponseParts {
-    pretext: String,
-    title: String,
-    message: String,
-    things_of_interest: Vec<String>,
-    exits: Vec<String>,
+pub struct ResponseParts {
+   pub pretext: String,
+   pub  title: String,
+   pub message: String,
+   pub things_of_interest: Vec<String>,
+   pub exits: Vec<String>,
+    pub dont_understand: bool,
 }
 
 fn is_message_title(line: &str) -> Result<String, Box<dyn Error>> {
@@ -23,7 +24,7 @@ fn is_message_title(line: &str) -> Result<String, Box<dyn Error>> {
     Ok(title)
 }
 fn is_exit_title(line: &str) -> Result<u8, Box<dyn Error>> {
-    let re = Regex::new(r"There are (?<exits>[0-9]+) exit.*:")?;
+    let re = Regex::new(r"There .* (?<exits>[0-9]+) exit.*:")?;
     let Some(capture) = re.captures(line) else {
         return Err("no match".into());
     };
@@ -37,9 +38,15 @@ fn is_things_title(line: &str) -> bool {
 fn is_last_question_line(line: &str) -> bool {
     line.trim() == "What do you do?"
 }
+fn is_do_not_understand(line: &str) -> bool {
+    line.trim() == "I don't understand; try 'help' for instructions."
+}
+fn is_slash_command(line: &str) -> bool {
+    line.trim_start().starts_with("/")
+}
 
 fn is_item(line: &str) -> Result<String, Box<dyn Error>> {
-    let re = Regex::new(r"^- (?<item>.*)$")?;
+    let re = Regex::new(r"^ *- (?<item>.*)$")?;
     let Some(capture) = re.captures(line) else {
         return Err("no match".into());
     };
@@ -54,6 +61,7 @@ enum MessageSections {
     Things,
     Exits,
     AfterPrompt,
+    DoNotUnderstand,
 }
 
 impl<'a> OuputAnalyzer<'a> {
@@ -72,10 +80,12 @@ impl<'a> OuputAnalyzer<'a> {
         let mut exits = vec![];
         let mut exits_num = 0;
         let mut lines_it = response_lines.into_iter();
+        let mut dont_understand = false;
         while let Some(line) = lines_it.next() {
             if let Ok(t) = is_message_title(line)
                 && section == MessageSections::Pretext
             {
+                eprintln!("got message title");
                 trace!("encounter message title");
                 section = MessageSections::Message;
                 pretext.push_str(buffer.as_str().trim_end());
@@ -89,6 +99,7 @@ impl<'a> OuputAnalyzer<'a> {
             } else if let Ok(exits) = is_exit_title(line)
                 && (section == MessageSections::Things || section == MessageSections::Message)
             {
+                eprintln!("got exit title");
                 trace!("encounter exit title");
                 exits_num = exits;
                 match section {
@@ -114,6 +125,19 @@ impl<'a> OuputAnalyzer<'a> {
             } else if is_last_question_line(line) {
                 trace!("encounter last question line");
                 section = MessageSections::AfterPrompt;
+            } else if is_do_not_understand(line) {     
+                trace!("encounter 'do not understand' line");
+                section = MessageSections::DoNotUnderstand;
+                dont_understand = true;
+                if !buffer.trim().is_empty() {
+                pretext.push_str(buffer.trim());
+                buffer.clear();
+                pretext.push('\n');
+                }
+                pretext.push_str(line.trim());
+            } else if is_slash_command(line) {     
+                // Do not store slash commands in analysis
+                continue;
             } else {
                 if let Ok(val) = is_item(line) {
                     match section {
@@ -127,10 +151,14 @@ impl<'a> OuputAnalyzer<'a> {
                             return Err("items should not encounter in pretext".into());
                         }
                         MessageSections::Message => {
+                            debug!("message test is {}", self.response );
                             return Err("items should not encounter in message text".into());
                         }
                         MessageSections::AfterPrompt => {
                             return Err("cannot contain any text after the question prompt".into());
+                        },
+                        MessageSections::DoNotUnderstand => {
+                            return Err("items should not encounter in error message".into());
                         }
                     }
                 } else {
@@ -148,7 +176,7 @@ impl<'a> OuputAnalyzer<'a> {
         assert_eq!(
             exits_num as usize,
             exits.len(),
-            "declared exits number must match the parsed exits number"
+            "declared exits number must match the parsed exits number Exits: {:?}", exits
         );
         if parsed_lines == 0 {
             return Err("nothing was parsed".into());
@@ -157,6 +185,7 @@ impl<'a> OuputAnalyzer<'a> {
             pretext,
             message,
             exits,
+            dont_understand,
             things_of_interest: things,
             title: message_title,
         })
@@ -175,8 +204,15 @@ mod tests {
         assert_eq!(res.unwrap(), 2);
     }
     #[test]
+    fn test_exit_title_1_space() {
+        let line = " There is 1 exit: ";
+        let res = is_exit_title(line);
+        assert!(res.is_ok(), "{}", format!("res is  {:?}", res));
+        assert_eq!(res.unwrap(), 1);
+    }
+    #[test]
     fn test_exit_title_1() {
-        let line = "There are 1 exit:";
+        let line = "There is 1 exit:";
         let res = is_exit_title(line);
         assert!(res.is_ok(), "{}", format!("res is  {:?}", res));
         assert_eq!(res.unwrap(), 1);
@@ -193,6 +229,20 @@ mod tests {
         let line = "There is something else";
         let res = is_exit_title(line);
         assert!(res.is_err());
+    }
+    #[test]
+    fn test_is_item() {
+        let line = "- south";
+        let res = is_item(line);
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(),"south")
+    }
+    #[test]
+    fn test_is_item_space() {
+        let line = "    - north";
+        let res = is_item(line);
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(),"north")
     }
 
     #[test]
@@ -268,6 +318,92 @@ The self-test completion code is: jGxkvqlwrGNE"#);
                     "Parsed object is {:?}",
                     result
                 );
+            }
+            Err(parse_err) => {
+                assert!(false, "failed to parse message. Error: {}", parse_err);
+            }
+        }
+    }
+    #[test]
+    fn test_initial_small_paragraph() {
+        let paragraph = r#"
+    == Foothills ==
+    As you begin to leave, you feel the urge for adventure pulling you back...
+
+    There is 1 exit:
+    - north
+
+    What do you do?
+"#;
+        let op = OuputAnalyzer::new(paragraph);
+        match op.parse() {
+            Ok(result) => {
+                assert_eq!(result.title, "Foothills");
+                assert_eq!(result.exits.len(), 1);
+                assert!(result.pretext.is_empty());
+                assert_eq!(result.things_of_interest.len(), 0);
+                assert_eq!(
+                    result.message, "    As you begin to leave, you feel the urge for adventure pulling you back...",
+                    "Parsed object is {:?}",
+                    result
+                );
+            }
+            Err(parse_err) => {
+                assert!(false, "failed to parse message. Error: {}", parse_err);
+            }
+        }
+    }
+    #[test]
+    fn test_initial_malformed_paragraph() {
+        let paragraph = r#"
+    == Foothills ==
+    As you begin to leave, you feel the urge for adventure pulling you back...
+
+    There is 1 exit:
+    - north
+
+    What do you do?
+    /show_state
+
+    I don't understand; try 'help' for instructions.
+
+    What do you do?
+    /show_state
+"#;
+        let op = OuputAnalyzer::new(paragraph);
+        match op.parse() {
+            Ok(result) => {
+                assert_eq!(result.title, "Foothills");
+                assert_eq!(result.exits.len(), 1);
+                assert_eq!(result.pretext, "I don't understand; try 'help' for instructions.");
+                assert_eq!(result.things_of_interest.len(), 0);
+                assert_eq!(
+                    result.message, "    As you begin to leave, you feel the urge for adventure pulling you back...", "Parsed object is {:?}",
+                    result
+                );
+            }
+            Err(parse_err) => {
+                assert!(false, "failed to parse message. Error: {}", parse_err);
+            }
+        }
+    }
+
+    #[test]
+    fn test_do_not_understand() {
+        let paragraph = r#"
+    I don't understand; try 'help' for instructions.
+
+    What do you do?
+"#;
+        let op = OuputAnalyzer::new(paragraph);
+        match op.parse() {
+            Ok(result) => {
+                assert!(result.dont_understand);
+                assert_eq!( result.pretext, "I don't understand; try 'help' for instructions.", "Parsed object is {:?}", result);
+                assert_eq!(result.title, "");
+                assert_eq!(result.exits.len(), 0);
+                assert_eq!(result.things_of_interest.len(), 0);
+                assert!( result.message.is_empty(), "Parsed object is {:?}", result);
             }
             Err(parse_err) => {
                 assert!(false, "failed to parse message. Error: {}", parse_err);

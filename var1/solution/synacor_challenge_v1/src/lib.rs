@@ -10,9 +10,11 @@ use std::path::PathBuf;
 use std::{fmt, fs};
 
 use crate::aux::Commander;
+use crate::maze_analyzer::MazeAnalyzer;
 
-mod aux;
 pub mod config;
+mod aux;
+mod maze_analyzer;
 mod output_parser;
 
 //const MAX: u16 = 32768; // The same as 1 << 15
@@ -34,6 +36,7 @@ struct VM {
     record_output: Option<PathBuf>,
     current_command_buf: String, //used to store user input until the newline character
     output_writer: Option<BufWriter<File>>,
+    maze_analyzer: MazeAnalyzer,
 }
 
 /*
@@ -405,6 +408,7 @@ impl VM {
             replay_commands: None,
             replay_buffer: VecDeque::new(),
             output_writer: None,
+            maze_analyzer: MazeAnalyzer::new(),
         }
     }
     fn get_state(&self) -> String {
@@ -425,13 +429,6 @@ impl VM {
             "{}\n",
             iter::repeat("_").take(44).collect::<String>()
         ));
-        // state.push_str(&format!(
-        //     "{:<9}: {}\n",
-        //     "# to replay",
-        //     self.replay_commands
-        //         .clone()
-        //         .map_or("N/A".to_string(), |v| v.iter().len().to_string())
-        // ));
         state.push_str(&format!(
             "{:<9}: {}\n",
             "record out",
@@ -439,11 +436,7 @@ impl VM {
                 .clone()
                 .map_or("N/A".to_string(), |p| p.display().to_string())
         ));
-        // state.push_str(&format!(
-        //     "{:<9}: {}\n",
-        //     "# cmd. hist",
-        //     self.commands_history.len()
-        // ));
+        state.push_str(&self.maze_analyzer.get_maze_analyzer_state(1));
         state.push_str(&format!("=============================================\n"));
         state
     }
@@ -1100,12 +1093,16 @@ impl VM {
             self.current_command_buf.as_str()
         );
         let command = self.current_command_buf.clone();
+        self.current_command_buf.clear();
         if let Err(process_error) = self.process_command(&command) {
             warn!("processing command returned an error: {}", process_error);
         }
         self.commands_history.push(command);
-        self.current_command_buf.clear();
         debug!("history size now is {}", self.commands_history.len());
+        trace!("after accepting the user command we flush maze analyzer too");
+        if let Err(maze_error) = self.maze_analyzer.add_response() {
+            error!("failed to add response to the maze analyzer Error: {}", maze_error);
+        }
     }
     fn grab_input(&mut self, c: char) {
         match c {
@@ -1157,6 +1154,7 @@ impl VM {
                 }
             }
         }
+        self.maze_analyzer.push(c);
     }
     /// This function is an implementation of the 'in' operational instruction
     fn read_in(&mut self, a: Address) {
