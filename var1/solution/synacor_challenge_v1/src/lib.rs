@@ -1,18 +1,18 @@
 use colored::Colorize;
-use log::{log_enabled, warn};
 use log::{Level, debug, error, info, trace};
+use log::{log_enabled, warn};
 use std::collections::VecDeque;
 use std::error::Error;
-use std::fmt;
-use std::io::{self, Read, Write};
+use std::{fmt, fs};
 use std::fs::File;
-use std::path::PathBuf;
+use std::io::{self, BufWriter, Read, Write};
 use std::iter;
+use std::path::PathBuf;
 
 use crate::aux::Commander;
 
-pub mod config;
 mod aux;
+pub mod config;
 
 //const MAX: u16 = 32768; // The same as 1 << 15
 const MAX: u16 = 1 << 15;
@@ -31,6 +31,7 @@ struct VM {
     commands_history: Vec<String>,
     record_output: Option<PathBuf>,
     current_command_buf: String, //used to store user input until the newline character
+    output_writer: Option<BufWriter<File>>,
 }
 
 /*
@@ -144,7 +145,11 @@ fn print_slash_command_help() {
     eprintln!("*** Available slash '/' commands: ***");
     eprintln!("/help - show this help");
     eprintln!("/show_state - show state of the VM");
-
+    eprintln!("/dump_state - save VM state information to file");
+    eprintln!("/dump_memoty - save VM RAM to file");
+    eprintln!("/show_history - show commands history");
+    eprintln!("/save_history - save commands history to file");
+    eprintln!("/record_output - start output recording");
 }
 
 /// This function composes u16 number from little endian byte pair of low byte and high byte
@@ -180,7 +185,7 @@ fn compose_value(byte_pair: (u8, u8)) -> u16 {
 }
 
 fn char_is_printable(c: char) -> bool {
- c as u8 >= 32 && c as u8 <= 126
+    c as u8 >= 32 && c as u8 <= 126
 }
 
 /// This function decomposes u16 number to the little endian byte pair of low byte and high byte
@@ -272,9 +277,9 @@ impl ArithmeticOperations {
 impl<'b> aux::Commander<'b> for VM {
     fn show_state(&self) {
         trace!("showing VM state to stderr");
-        eprintln!("{}",self.get_state());
+        eprintln!("{}", self.get_state());
     }
-    fn dump_state(&self, p: &std::path::Path)  -> Result<(), std::io::Error> {
+    fn dump_state(&self, p: &std::path::Path) -> Result<(), std::io::Error> {
         trace!("dumping VM state to {}", p.display());
         std::fs::write(p, self.get_state())
     }
@@ -282,20 +287,23 @@ impl<'b> aux::Commander<'b> for VM {
         trace!("dumping VM memory to {}", p.display());
         std::fs::write(p, self.memory.as_ref())
     }
-    fn record_output(&mut self, p: &std::path::Path)  -> Result<(), Box<dyn Error>> {
-        if self.record_output.is_some() {
+    fn record_output(&mut self, p: &std::path::Path) -> Result<(), Box<dyn Error>> {
+        if self.is_recording_active() {
             return Err(format!("recording is already enabled to another file").into());
         }
         trace!("starting recording VM output to {}", p.display());
-        
+
         self.record_output = Some(p.to_path_buf());
         Ok(())
     }
     fn commands_history(&self) -> &[String] {
-        trace!("returning {} elements of command history", self.commands_history.len());
+        trace!(
+            "returning {} elements of command history",
+            self.commands_history.len()
+        );
         self.commands_history.as_ref()
     }
-    fn get_replay_commands(&self) -> Vec<String>{
+    fn get_replay_commands(&self) -> Vec<String> {
         match &self.replay_commands {
             Some(rc) => rc.clone(),
             None => vec![],
@@ -304,26 +312,66 @@ impl<'b> aux::Commander<'b> for VM {
     fn is_recording_active(&self) -> bool {
         self.record_output.is_some()
     }
-    fn save_commands_history(&self, p : &std::path::Path) -> Result<(), std::io::Error> {
-        trace!("saving command history to {}", p.display());
-        let mut counter: u16 =0;
-        let mut file = File::create(p)?;
-        self.commands_history().iter().for_each(|cmd|  {file.write(cmd.as_bytes()); counter +=1;} );
-        trace!("saved {} commands of history", counter);
-        Ok(())
+    fn save_commands_history(&self, dst: &str) -> Result<(), io::Error> {
+        trace!("saving commands history to file {}", dst);
+        fs::write(dst, self.get_commands_history(0))
     }
-    fn process_command(&mut self, command: &str) -> Result<(),Box<dyn Error>> {
+    fn process_command(&mut self, command: &str) -> Result<(), Box<dyn Error>> {
         debug!("processing command {}", self.current_command_buf.as_str());
         if command.starts_with("/") {
             trace!("processing slash '/' command");
             match command.to_lowercase().as_str() {
                 "/help" => print_slash_command_help(),
                 "/show_state" => self.show_state(),
-                _ =>  {
-        return Err("not implemented yet".into());
+                "/show_history" => {
+                    trace!("showing history of commands by demand");
+                    eprintln!("{}", self.get_commands_history(0));
+                },
+                "/save_history" => {
+                    trace!("saving history of commands by demand");
+                    // TODO: Provide an argument to this command
+                    const HISTORY_FILE : &'static str = "history.txt";
+                    match self.save_commands_history(HISTORY_FILE) {
+                        Ok(_) => eprintln!("successfully saved commands history to file {}", HISTORY_FILE),
+                        Err(sh_err) => error!("failed to save commands history to file {} Error: {}",HISTORY_FILE, sh_err),
+                    };
+
+                },
+                "/record_output" => {
+                    // TODO: Provide an argument to this command
+                    trace!("enabling output record by demand");
+                    const OUTPUT_FILE : &'static str = "output.txt";
+                    match self.record_output(Into::<PathBuf>::into(OUTPUT_FILE).as_path()) {
+                       Ok(()) => eprintln!("output recording started"),
+                        Err(e_err) => error!("failed to start output recording. Error: {}", e_err),
+                    }
+                },
+                "/dump_state" => {
+                    trace!("dumping VM state by demand");
+                    // TODO: Provide an argument to this command
+                    const STATE_FILE : &'static str = "vm_state.txt";
+                    match self.dump_state(Into::<PathBuf>::into(STATE_FILE).as_path()) {
+                        Ok(()) => eprintln!("saved VM state to {}", STATE_FILE),
+                        Err(st_err) => error!("failed to save VM state to {} Error: {}", STATE_FILE, st_err),
+                    }
+                    
                 }
-             }
-        } 
+                "/dump_memory" => {
+                    // TODO: Provide an argument to this command
+                    const RAM_FILE : &'static str = "vm_memory_dump.bin";
+                    match self.dump_memory(&Into::<PathBuf>::into(RAM_FILE)) {
+                        Ok(()) => eprintln!("saved VM RAM to {}", RAM_FILE),
+                        Err(m_err) => error!("failed to save VM RAM to {} Error: {}", RAM_FILE, m_err),
+                    }
+
+                }
+                user_command => {
+                    return Err(format!("unsupported slash command {}", user_command).into());
+                }
+            }
+        }
+        // Save command input to the output recording
+        command.chars().for_each(|c| self.grab_output(c));
         Ok(())
     }
 }
@@ -339,38 +387,62 @@ impl VM {
             commands_history: vec![],
             current_command_buf: String::new(),
             record_output: None,
-    replay_commands: None,
+            replay_commands: None,
+            output_writer: None,
         }
     }
     fn get_state(&self) -> String {
         let mut state = String::new();
         state.push_str(&format!("***         Virtual Machine State         ***\n"));
-        state.push_str(&format!("{}\n", iter::repeat("=").take(44).collect::<String>()));
+        state.push_str(&format!(
+            "{}\n",
+            iter::repeat("=").take(44).collect::<String>()
+        ));
         state.push_str(&format!("{:<9}: {}\n", "halt", self.halt));
         state.push_str(&format!("{:<9}: {}\n", "rom size", self.memory.len()));
         state.push_str(&self.get_registers_info(1));
         state.push_str(&self.get_stack_info(1));
         state.push_str(&format!("{:<9}: {}\n", "position", self.current_address));
-        state.push_str(&format!("{}\n", iter::repeat("_").take(44).collect::<String>()));
-        state.push_str(&format!("{:<9}: {}\n", "# to replay", self.replay_commands.clone().map_or("N/A".to_string(), |v| v.iter().len().to_string())) );
-        state.push_str(&format!("{:<9}: {}\n", "record out", self.record_output.clone().map_or("N/A".to_string(), |p| p.display().to_string())));
-        state.push_str(&format!("{:<9}: {}\n", "# cmd. hist", self.commands_history.len()));
+        state.push_str(&format!(
+            "{}\n",
+            iter::repeat("_").take(44).collect::<String>()
+        ));
+        state.push_str(&format!(
+            "{:<9}: {}\n",
+            "# to replay",
+            self.replay_commands
+                .clone()
+                .map_or("N/A".to_string(), |v| v.iter().len().to_string())
+        ));
+        state.push_str(&format!(
+            "{:<9}: {}\n",
+            "record out",
+            self.record_output
+                .clone()
+                .map_or("N/A".to_string(), |p| p.display().to_string())
+        ));
+        state.push_str(&format!(
+            "{:<9}: {}\n",
+            "# cmd. hist",
+            self.commands_history.len()
+        ));
         state.push_str(&format!("=============================================\n"));
         state
     }
-    fn  get_registers_info(&self, indent: usize) -> String{
+    fn get_registers_info(&self, indent: usize) -> String {
         let mut registers = String::new();
         let indentation = iter::repeat("  ").take(indent).collect::<String>();
         registers.push_str(&format!("{:<9}:\n", "registers"));
-        registers.push_str(&format!( "{}{}\n",
+        registers.push_str(&format!(
+            "{}{}\n",
             indentation,
             iter::repeat("-").take(44 - indent).collect::<String>()
         ));
-        self.registers
-            .iter()
-            .enumerate()
-            .for_each(|(n, r)| registers.push_str(&format!("{}{}{}: {:<10}\n", indentation, "reg ", n, r)));
-        registers.push_str(&format!( "{}{}\n",
+        self.registers.iter().enumerate().for_each(|(n, r)| {
+            registers.push_str(&format!("{}{}{}: {:<10}\n", indentation, "reg ", n, r))
+        });
+        registers.push_str(&format!(
+            "{}{}\n",
             indentation,
             iter::repeat("-").take(44 - indent).collect::<String>()
         ));
@@ -379,8 +451,13 @@ impl VM {
     fn get_stack_info(&self, indent: usize) -> String {
         let mut stack = String::new();
         let indentation = iter::repeat("  ").take(indent).collect::<String>();
-        stack.push_str(&format!("{:<9}  (size: {:3}):\n", "stack", self.stack.len()));
-        stack.push_str(&format!( "{}{}\n",
+        stack.push_str(&format!(
+            "{:<9}  (size: {:3}):\n",
+            "stack",
+            self.stack.len()
+        ));
+        stack.push_str(&format!(
+            "{}{}\n",
             indentation,
             iter::repeat("+").take(44 - indent).collect::<String>()
         ));
@@ -389,19 +466,52 @@ impl VM {
             .enumerate()
             .rev()
             .for_each(|(n, r)| stack.push_str(&format!("{}[{}: {:<10}]\n", indentation, n, r)));
-        stack.push_str(&format!( "{}{}\n",
+        stack.push_str(&format!(
+            "{}{}\n",
             indentation,
             iter::repeat("+").take(44 - indent).collect::<String>()
         ));
         stack
+    }
+    fn get_commands_history(&self, indent: usize) -> String {
+        let mut commands = String::new();
+        let indentation = iter::repeat("  ").take(indent).collect::<String>();
+        commands.push_str(&format!(
+            "{:<9}  (size: {:3}):\n",
+            "commands history",
+            self.stack.len()
+        ));
+        commands.push_str(&format!(
+            "{}{}\n",
+            indentation,
+            iter::repeat(".").take(44 - indent).collect::<String>()
+        ));
+        self.commands_history()
+            .iter()
+            .enumerate()
+            .for_each(|(n, r)| commands.push_str(&format!("{}[{}: {:<10}]\n", indentation, n, r)));
+        commands.push_str(&format!(
+            "{}{}\n",
+            indentation,
+            iter::repeat(".").take(44 - indent).collect::<String>()
+        ));
+        commands
     }
     fn new_from_rom(rom: Vec<u8>) -> Self {
         let mut vm = Self::new();
         vm.load_rom(rom);
         vm
     }
-    fn new_from_rom_with_options(rom: Vec<u8>, replay_commands: Option<Vec<String>>, record_output: Option<PathBuf>) -> Self {
-         VM{ replay_commands, record_output  ,..Self::new_from_rom(rom)}
+    fn new_from_rom_with_options(
+        rom: Vec<u8>,
+        replay_commands: Option<Vec<String>>,
+        record_output: Option<PathBuf>,
+    ) -> Self {
+        VM {
+            replay_commands,
+            record_output,
+            ..Self::new_from_rom(rom)
+        }
     }
     fn load_rom(&mut self, rom: Vec<u8>) {
         debug!("loading program of {} bytes into memory", rom.len());
@@ -498,7 +608,7 @@ impl VM {
             character as u8
         );
         print!("{}", character);
-
+        self.grab_output(character);
         self.step_n(2);
     }
 
@@ -926,9 +1036,12 @@ impl VM {
         self.step_n(3);
     }
     fn store_command_to_history(&mut self) {
-        debug!("storing command {} to command history", self.current_command_buf.as_str());
-let command = self.current_command_buf.clone();
-        if let Err(process_error)  = self.process_command(&command) {
+        debug!(
+            "storing command {} to command history",
+            self.current_command_buf.as_str()
+        );
+        let command = self.current_command_buf.clone();
+        if let Err(process_error) = self.process_command(&command) {
             warn!("processing command returned an error: {}", process_error);
         }
         self.commands_history.push(command);
@@ -939,9 +1052,51 @@ let command = self.current_command_buf.clone();
         match c {
             '\n' => self.store_command_to_history(),
             c if char_is_printable(c) => self.current_command_buf.push(c as char),
-            _ => { 
-                warn!("trying to store unprintable character! This should never happen!"); 
-        },
+            _ => {
+                warn!("trying to store unprintable character! This should never happen!");
+            }
+        }
+    }
+    fn disable_recording(&mut self) {
+        trace!("set 'record_output' to None, and thus disabled the output recording");
+        self.record_output = None;
+        return;
+    }
+    fn grab_output(&mut self, c: char) {
+        if self.is_recording_active() {
+            // Init BufWriter if needed
+            if self.output_writer.is_none() {
+                match File::create(self.record_output.clone().unwrap()) {
+                    Ok(f) => {
+                        self.output_writer = Some(BufWriter::new(f));
+                    }
+                    Err(f_err) => {
+                        error!(
+                            "creation of the output file failed. Error: {} Recording of the output is disabled",
+                            f_err
+                        );
+                        self.disable_recording();
+                        return;
+                    }
+                };
+            }
+            // Peroform write
+            if let Some(ref mut bw) = self.output_writer {
+                match bw.write(&[c as u8]) {
+                    Ok(count) => trace!("wrote {} bytes to the outout buffer", count),
+                    Err(buf_e) => {
+                        error!(
+                            "failed to write character to the output recording buffer. Error: {} Recording stopped",
+                            buf_e
+                        );
+                        self.disable_recording();
+                        return;
+                    }
+                }
+                if c == '\n' {
+                    self.flush_record_buffer();
+                }
+            }
         }
     }
     /// This function is an implementation of the 'in' operational instruction
@@ -1223,8 +1378,13 @@ let command = self.current_command_buf.clone();
               no operation
             */
         }
-
+        self.flush_record_buffer();
         Ok(cycles)
+    }
+    fn flush_record_buffer(&mut self) {
+        if let Some(Err(f_err)) = self.output_writer.as_mut().map(|f: &mut BufWriter<File>| f.flush()) {
+            error!("failed to flush the output record buffer. Error: {}", f_err);
+        }
     }
 }
 
@@ -1234,8 +1394,8 @@ pub fn run(config: config::Configuration) -> Result<(), Box<dyn Error>> {
         return Err("configuration is invalid".into());
     }
     trace!("configuration has been successfully validated");
-    let (rom, replay) = config.rom_n_replay();
-    let mut vm = VM::new_from_rom_with_options(rom,replay, Some(PathBuf::from("challenge.out")));
+    let (rom, replay, record_output) = config.rom_replay_record();
+    let mut vm = VM::new_from_rom_with_options(rom, replay, record_output);
     let cycles = vm.main_loop()?;
     debug!("VM exited after completing {} cycles", cycles);
     Ok(())
