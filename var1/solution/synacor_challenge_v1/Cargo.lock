@@ -300,6 +300,7 @@ dependencies = [
  "colored",
  "env_logger",
  "log",
+ "regex",
 ]
 
 [[package]]

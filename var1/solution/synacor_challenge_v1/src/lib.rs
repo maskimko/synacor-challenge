@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use crate::aux::Commander;
 
 mod aux;
+mod output_parser;
 pub mod config;
 
 //const MAX: u16 = 32768; // The same as 1 << 15
