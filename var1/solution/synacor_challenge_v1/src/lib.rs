@@ -28,6 +28,7 @@ struct VM {
 
     // Auxiliary stuff
     replay_commands: Option<Vec<String>>,
+    replay_buffer: VecDeque<char>,
     commands_history: Vec<String>,
     record_output: Option<PathBuf>,
     current_command_buf: String, //used to store user input until the newline character
@@ -144,6 +145,7 @@ impl fmt::Debug for Data {
 fn print_slash_command_help() {
     eprintln!("*** Available slash '/' commands: ***");
     eprintln!("/help - show this help");
+    eprintln!("/show_replay - show replay commands");
     eprintln!("/show_state - show state of the VM");
     eprintln!("/dump_state - save VM state information to file");
     eprintln!("/dump_memory - save VM RAM to file");
@@ -314,7 +316,7 @@ impl<'b> aux::Commander<'b> for VM {
     }
     fn save_commands_history(&self, dst: &str) -> Result<(), io::Error> {
         trace!("saving commands history to file {}", dst);
-        fs::write(dst, self.get_commands_history(0))
+        fs::write(dst, self.commands_history().join("\n"))
     }
     fn process_command(&mut self, command: &str) -> Result<(), Box<dyn Error>> {
         debug!("processing command {}", self.current_command_buf.as_str());
@@ -336,6 +338,10 @@ impl<'b> aux::Commander<'b> for VM {
                         Err(sh_err) => error!("failed to save commands history to file {} Error: {}",HISTORY_FILE, sh_err),
                     };
 
+                },
+"/show_replay" => {
+                trace!("showing replay commands history");
+                    eprintln!("{}", self.get_replay(0));
                 },
                 "/record_output" => {
                     // TODO: Provide an argument to this command
@@ -388,6 +394,7 @@ impl VM {
             current_command_buf: String::new(),
             record_output: None,
             replay_commands: None,
+            replay_buffer: VecDeque::new(),
             output_writer: None,
         }
     }
@@ -402,18 +409,20 @@ impl VM {
         state.push_str(&format!("{:<9}: {}\n", "rom size", self.memory.len()));
         state.push_str(&self.get_registers_info(1));
         state.push_str(&self.get_stack_info(1));
+        state.push_str(&self.get_replay(1));
+        state.push_str(&self.get_commands_history(1));
         state.push_str(&format!("{:<9}: {}\n", "position", self.current_address));
         state.push_str(&format!(
             "{}\n",
             iter::repeat("_").take(44).collect::<String>()
         ));
-        state.push_str(&format!(
-            "{:<9}: {}\n",
-            "# to replay",
-            self.replay_commands
-                .clone()
-                .map_or("N/A".to_string(), |v| v.iter().len().to_string())
-        ));
+        // state.push_str(&format!(
+        //     "{:<9}: {}\n",
+        //     "# to replay",
+        //     self.replay_commands
+        //         .clone()
+        //         .map_or("N/A".to_string(), |v| v.iter().len().to_string())
+        // ));
         state.push_str(&format!(
             "{:<9}: {}\n",
             "record out",
@@ -421,11 +430,11 @@ impl VM {
                 .clone()
                 .map_or("N/A".to_string(), |p| p.display().to_string())
         ));
-        state.push_str(&format!(
-            "{:<9}: {}\n",
-            "# cmd. hist",
-            self.commands_history.len()
-        ));
+        // state.push_str(&format!(
+        //     "{:<9}: {}\n",
+        //     "# cmd. hist",
+        //     self.commands_history.len()
+        // ));
         state.push_str(&format!("=============================================\n"));
         state
     }
@@ -479,7 +488,7 @@ impl VM {
         commands.push_str(&format!(
             "{:<9}  (size: {:3}):\n",
             "commands history",
-            self.stack.len()
+            self.commands_history.len()
         ));
         commands.push_str(&format!(
             "{}{}\n",
@@ -489,12 +498,46 @@ impl VM {
         self.commands_history()
             .iter()
             .enumerate()
+            .for_each(|(n, r)| commands.push_str(&format!("{}[{}: {:<15}]\n", indentation, n, r)));
+        commands.push_str(&format!(
+            "{}{}\n",
+            indentation,
+            iter::repeat(".").take(44 - indent).collect::<String>()
+        ));
+        commands
+    }
+    fn get_replay(&self, indent: usize) -> String {
+        let mut commands = String::new();
+        let indentation = iter::repeat("  ").take(indent).collect::<String>();
+        match self.replay_commands {
+            Some(ref rc) => {
+        commands.push_str(&format!(
+            "{:<9}  (size: {:3}):\n",
+            "replay commands",
+            rc.len()
+        ));
+        commands.push_str(&format!(
+            "{}{}\n",
+            indentation,
+            iter::repeat(".").take(44 - indent).collect::<String>()
+        ));
+        rc
+            .iter()
+            .enumerate()
             .for_each(|(n, r)| commands.push_str(&format!("{}[{}: {:<10}]\n", indentation, n, r)));
         commands.push_str(&format!(
             "{}{}\n",
             indentation,
             iter::repeat(".").take(44 - indent).collect::<String>()
         ));
+
+            }, 
+            None => commands.push_str(&format!(
+            "{:<9}  (size: {:3}):\n",
+            "replay commands",
+                "N/A"
+        )),
+        }
         commands
     }
     fn new_from_rom(rom: Vec<u8>) -> Self {
@@ -507,11 +550,13 @@ impl VM {
         replay_commands: Option<Vec<String>>,
         record_output: Option<PathBuf>,
     ) -> Self {
-        VM {
+        let mut vm  = VM {
             replay_commands,
             record_output,
             ..Self::new_from_rom(rom)
-        }
+        };
+        vm.load_replay_buffer();
+        vm
     }
     fn load_rom(&mut self, rom: Vec<u8>) {
         debug!("loading program of {} bytes into memory", rom.len());
@@ -519,6 +564,12 @@ impl VM {
             self.memory[n] = v;
         }
         trace!("loading OK!");
+    }
+    fn load_replay_buffer(&mut self) {
+        if self.replay_commands.is_some() {
+            trace!("loading replay commands to the replay buffer");
+            self.get_replay_commands().join("\n").chars().for_each(|c| self.replay_buffer.push_back(c));
+        }
     }
     /// This method gets 2 adjasent bytes from the RAM and composes a number u16 from it
     fn get_value_from_addr(&self, addr: &Address) -> u16 {
