@@ -3,17 +3,17 @@ use log::{Level, debug, error, info, trace};
 use log::{log_enabled, warn};
 use std::collections::VecDeque;
 use std::error::Error;
-use std::{fmt, fs};
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Write};
 use std::iter;
 use std::path::PathBuf;
+use std::{fmt, fs};
 
 use crate::aux::Commander;
 
 mod aux;
-mod output_parser;
 pub mod config;
+mod output_parser;
 
 //const MAX: u16 = 32768; // The same as 1 << 15
 const MAX: u16 = 1 << 15;
@@ -329,48 +329,56 @@ impl<'b> aux::Commander<'b> for VM {
                 "/show_history" => {
                     trace!("showing history of commands by demand");
                     eprintln!("{}", self.get_commands_history(0));
-                },
+                }
                 "/save_history" => {
                     trace!("saving history of commands by demand");
                     // TODO: Provide an argument to this command
-                    const HISTORY_FILE : &'static str = "history.txt";
+                    const HISTORY_FILE: &'static str = "history.txt";
                     match self.save_commands_history(HISTORY_FILE) {
-                        Ok(_) => eprintln!("successfully saved commands history to file {}", HISTORY_FILE),
-                        Err(sh_err) => error!("failed to save commands history to file {} Error: {}",HISTORY_FILE, sh_err),
+                        Ok(_) => eprintln!(
+                            "successfully saved commands history to file {}",
+                            HISTORY_FILE
+                        ),
+                        Err(sh_err) => error!(
+                            "failed to save commands history to file {} Error: {}",
+                            HISTORY_FILE, sh_err
+                        ),
                     };
-
-                },
-"/show_replay" => {
-                trace!("showing replay commands history");
+                }
+                "/show_replay" => {
+                    trace!("showing replay commands history");
                     eprintln!("{}", self.get_replay(0));
-                },
+                }
                 "/record_output" => {
                     // TODO: Provide an argument to this command
                     trace!("enabling output record by demand");
-                    const OUTPUT_FILE : &'static str = "output.txt";
+                    const OUTPUT_FILE: &'static str = "output.txt";
                     match self.record_output(Into::<PathBuf>::into(OUTPUT_FILE).as_path()) {
-                       Ok(()) => eprintln!("output recording started"),
+                        Ok(()) => eprintln!("output recording started"),
                         Err(e_err) => error!("failed to start output recording. Error: {}", e_err),
                     }
-                },
+                }
                 "/dump_state" => {
                     trace!("dumping VM state by demand");
                     // TODO: Provide an argument to this command
-                    const STATE_FILE : &'static str = "vm_state.txt";
+                    const STATE_FILE: &'static str = "vm_state.txt";
                     match self.dump_state(Into::<PathBuf>::into(STATE_FILE).as_path()) {
                         Ok(()) => eprintln!("saved VM state to {}", STATE_FILE),
-                        Err(st_err) => error!("failed to save VM state to {} Error: {}", STATE_FILE, st_err),
+                        Err(st_err) => error!(
+                            "failed to save VM state to {} Error: {}",
+                            STATE_FILE, st_err
+                        ),
                     }
-                    
                 }
                 "/dump_memory" => {
                     // TODO: Provide an argument to this command
-                    const RAM_FILE : &'static str = "vm_memory_dump.bin";
+                    const RAM_FILE: &'static str = "vm_memory_dump.bin";
                     match self.dump_memory(&Into::<PathBuf>::into(RAM_FILE)) {
                         Ok(()) => eprintln!("saved VM RAM to {}", RAM_FILE),
-                        Err(m_err) => error!("failed to save VM RAM to {} Error: {}", RAM_FILE, m_err),
+                        Err(m_err) => {
+                            error!("failed to save VM RAM to {} Error: {}", RAM_FILE, m_err)
+                        }
                     }
-
                 }
                 user_command => {
                     return Err(format!("unsupported slash command {}", user_command).into());
@@ -512,32 +520,26 @@ impl VM {
         let indentation = iter::repeat("  ").take(indent).collect::<String>();
         match self.replay_commands {
             Some(ref rc) => {
-        commands.push_str(&format!(
-            "{:<9}  (size: {:3}):\n",
-            "replay commands",
-            rc.len()
-        ));
-        commands.push_str(&format!(
-            "{}{}\n",
-            indentation,
-            iter::repeat(".").take(44 - indent).collect::<String>()
-        ));
-        rc
-            .iter()
-            .enumerate()
-            .for_each(|(n, r)| commands.push_str(&format!("{}[{}: {:<10}]\n", indentation, n, r)));
-        commands.push_str(&format!(
-            "{}{}\n",
-            indentation,
-            iter::repeat(".").take(44 - indent).collect::<String>()
-        ));
-
-            }, 
-            None => commands.push_str(&format!(
-            "{:<9}  (size: {:3}):\n",
-            "replay commands",
-                "N/A"
-        )),
+                commands.push_str(&format!(
+                    "{:<9}  (size: {:3}):\n",
+                    "replay commands",
+                    rc.len()
+                ));
+                commands.push_str(&format!(
+                    "{}{}\n",
+                    indentation,
+                    iter::repeat(".").take(44 - indent).collect::<String>()
+                ));
+                rc.iter().enumerate().for_each(|(n, r)| {
+                    commands.push_str(&format!("{}[{}: {:<10}]\n", indentation, n, r))
+                });
+                commands.push_str(&format!(
+                    "{}{}\n",
+                    indentation,
+                    iter::repeat(".").take(44 - indent).collect::<String>()
+                ));
+            }
+            None => commands.push_str(&format!("{:<9}  (size: {:3}):\n", "replay commands", "N/A")),
         }
         commands
     }
@@ -551,7 +553,7 @@ impl VM {
         replay_commands: Option<Vec<String>>,
         record_output: Option<PathBuf>,
     ) -> Self {
-        let mut vm  = VM {
+        let mut vm = VM {
             replay_commands,
             record_output,
             ..Self::new_from_rom(rom)
@@ -569,8 +571,11 @@ impl VM {
     fn load_replay_buffer(&mut self) {
         if self.replay_commands.is_some() {
             trace!("loading replay commands to the replay buffer");
-            self.get_replay_commands().join("\n").chars().for_each(|c| self.replay_buffer.push_back(c));
-            //Add trailing new line character to enter the last command 
+            self.get_replay_commands()
+                .join("\n")
+                .chars()
+                .for_each(|c| self.replay_buffer.push_back(c));
+            //Add trailing new line character to enter the last command
             self.replay_buffer.push_back('\n');
         }
     }
@@ -1157,28 +1162,26 @@ impl VM {
     fn read_in(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "in".magenta(), &a);
         // First we would like to read commands from the replay buffer, if there are any available.
-        let c : u8  = match  self.replay_buffer.pop_front() {
-               
+        let c: u8 = match self.replay_buffer.pop_front() {
             Some(replay_char) => {
-                eprint!("{}",replay_char.to_string().yellow().underline());
-                replay_char as u8 
-            },
-            None => {
-        let mut buf: [u8; 1] = [0];
-        match io::stdin().read_exact(&mut buf) {
-            Ok(()) =>  buf[0] ,
-            Err(e) => {
-                error!("failed to read from stdin. Error: {}", e);
-                panic!("failed on stdin reading");
+                eprint!("{}", replay_char.to_string().yellow().underline());
+                replay_char as u8
             }
-        }
-
+            None => {
+                let mut buf: [u8; 1] = [0];
+                match io::stdin().read_exact(&mut buf) {
+                    Ok(()) => buf[0],
+                    Err(e) => {
+                        error!("failed to read from stdin. Error: {}", e);
+                        panic!("failed on stdin reading");
+                    }
+                }
             }
         };
-                let reg = pack_raw_value(self.get_value_from_addr(&a));
-                let val = pack_raw_value(c.into());
-                self.set_value_to_register(reg, val);
-                self.grab_input(c as char);
+        let reg = pack_raw_value(self.get_value_from_addr(&a));
+        let val = pack_raw_value(c.into());
+        self.set_value_to_register(reg, val);
+        self.grab_input(c as char);
         self.step_n(2);
     }
     fn main_loop(&mut self) -> Result<u64, Box<dyn Error>> {
@@ -1445,7 +1448,11 @@ impl VM {
         Ok(cycles)
     }
     fn flush_record_buffer(&mut self) {
-        if let Some(Err(f_err)) = self.output_writer.as_mut().map(|f: &mut BufWriter<File>| f.flush()) {
+        if let Some(Err(f_err)) = self
+            .output_writer
+            .as_mut()
+            .map(|f: &mut BufWriter<File>| f.flush())
+        {
             error!("failed to flush the output record buffer. Error: {}", f_err);
         }
     }

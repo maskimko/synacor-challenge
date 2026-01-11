@@ -24,7 +24,11 @@ struct Args {
         help = "Force color output, even if piped (Works with CLICOLOR_FORCE=1)"
     )]
     force_color: bool,
-    #[arg(short = 's', long = "record-output", help = "Record output of the VM to file")]
+    #[arg(
+        short = 's',
+        long = "record-output",
+        help = "Record output of the VM to file"
+    )]
     record_output: Option<String>,
 }
 
@@ -38,7 +42,11 @@ pub fn parse_args() -> Result<Configuration, Box<dyn Error>> {
     let maybe_replay: Option<OsString> = args.replay.map(OsString::from);
     let rom_file: OsString = args.rom.into();
     let output_file: Option<OsString> = args.record_output.map(OsString::from);
-    let mut conf = Configuration::new(rom_file.into(), maybe_replay.map(PathBuf::from), output_file.map(PathBuf::from));
+    let mut conf = Configuration::new(
+        rom_file.into(),
+        maybe_replay.map(PathBuf::from),
+        output_file.map(PathBuf::from),
+    );
     conf.read_in()?;
     Ok(conf)
 }
@@ -88,7 +96,7 @@ impl fmt::Display for Configuration {
 impl Configuration {
     fn new(rom_file: PathBuf, replay_file: Option<PathBuf>, record_file: Option<PathBuf>) -> Self {
         Configuration {
-            record_file, 
+            record_file,
             rom_file,
             replay_file,
             rom: vec![],
