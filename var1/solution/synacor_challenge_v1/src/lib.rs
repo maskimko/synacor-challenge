@@ -569,6 +569,8 @@ impl VM {
         if self.replay_commands.is_some() {
             trace!("loading replay commands to the replay buffer");
             self.get_replay_commands().join("\n").chars().for_each(|c| self.replay_buffer.push_back(c));
+            //Add trailing new line character to enter the last command 
+            self.replay_buffer.push_back('\n');
         }
     }
     /// This method gets 2 adjasent bytes from the RAM and composes a number u16 from it
@@ -1153,20 +1155,29 @@ impl VM {
     /// This function is an implementation of the 'in' operational instruction
     fn read_in(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "in".magenta(), &a);
+        // First we would like to read commands from the replay buffer, if there are any available.
+        let c : u8  = match  self.replay_buffer.pop_front() {
+               
+            Some(replay_char) => {
+                eprint!("{}",replay_char.to_string().yellow().underline());
+                replay_char as u8 
+            },
+            None => {
         let mut buf: [u8; 1] = [0];
         match io::stdin().read_exact(&mut buf) {
-            Ok(()) => {
-                let c: u8 = buf[0];
-                let reg = pack_raw_value(self.get_value_from_addr(&a));
-                let val = pack_raw_value(c.into());
-                self.set_value_to_register(reg, val);
-                self.grab_input(c as char);
-            }
+            Ok(()) =>  buf[0] ,
             Err(e) => {
                 error!("failed to read from stdin. Error: {}", e);
                 panic!("failed on stdin reading");
             }
         }
+
+            }
+        };
+                let reg = pack_raw_value(self.get_value_from_addr(&a));
+                let val = pack_raw_value(c.into());
+                self.set_value_to_register(reg, val);
+                self.grab_input(c as char);
         self.step_n(2);
     }
     fn main_loop(&mut self) -> Result<u64, Box<dyn Error>> {
