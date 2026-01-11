@@ -1,4 +1,5 @@
 use clap::Parser;
+use colored::control;
 use log::{debug, trace, warn};
 use std::error::Error;
 use std::fmt;
@@ -8,7 +9,6 @@ use std::{
     io::{BufRead, BufReader, Read},
     path::PathBuf,
 };
-use colored::control;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -18,8 +18,14 @@ struct Args {
     rom: String,
     #[arg(short = 'R', long, help = "File with replay commands to run")]
     replay: Option<String>,
-    #[arg(long, default_value = "false", help = "Force color output, even if piped (Works with CLICOLOR_FORCE=1)")]
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Force color output, even if piped (Works with CLICOLOR_FORCE=1)"
+    )]
     force_color: bool,
+    #[arg(short = 's', long = "record-output", help = "Record output of the VM to file")]
+    record_output: Option<String>,
 }
 
 pub fn parse_args() -> Result<Configuration, Box<dyn Error>> {
@@ -31,7 +37,8 @@ pub fn parse_args() -> Result<Configuration, Box<dyn Error>> {
     }
     let maybe_replay: Option<OsString> = args.replay.map(OsString::from);
     let rom_file: OsString = args.rom.into();
-    let mut conf = Configuration::new(rom_file.into(), maybe_replay.map(PathBuf::from));
+    let output_file: Option<OsString> = args.record_output.map(OsString::from);
+    let mut conf = Configuration::new(rom_file.into(), maybe_replay.map(PathBuf::from), output_file.map(PathBuf::from));
     conf.read_in()?;
     Ok(conf)
 }
@@ -39,6 +46,7 @@ pub fn parse_args() -> Result<Configuration, Box<dyn Error>> {
 pub struct Configuration {
     rom_file: PathBuf,
     replay_file: Option<PathBuf>,
+    record_file: Option<PathBuf>,
     rom: Vec<u8>,
     replay_commands: Vec<String>,
 }
@@ -48,6 +56,7 @@ impl Default for Configuration {
         Configuration {
             rom_file: PathBuf::from("challenge.bin"),
             replay_file: None,
+            record_file: None,
             rom: vec![],
             replay_commands: vec![],
         }
@@ -77,10 +86,11 @@ impl fmt::Display for Configuration {
 }
 
 impl Configuration {
-    fn new(rom_file: PathBuf, replay_file: Option<PathBuf>) -> Self {
+    fn new(rom_file: PathBuf, replay_file: Option<PathBuf>, record_file: Option<PathBuf>) -> Self {
         Configuration {
-            rom_file: rom_file,
-            replay_file: replay_file,
+            record_file, 
+            rom_file,
+            replay_file,
             rom: vec![],
             replay_commands: vec![],
         }
@@ -145,7 +155,11 @@ impl Configuration {
         self.replay_commands.clone()
     }
 
-    pub fn rom_n_replay(self) -> (Vec<u8>, Vec<String>) {
-        (self.rom, self.replay_commands)
+    pub fn rom_replay_record(self) -> (Vec<u8>, Option<Vec<String>>, Option<PathBuf>) {
+        if self.replay_commands.is_empty() {
+            (self.rom, None, self.record_file)
+        } else {
+            (self.rom, Some(self.replay_commands), self.record_file)
+        }
     }
 }
