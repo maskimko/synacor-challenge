@@ -1,11 +1,11 @@
 use log::{trace, debug, error};
 use regex::Regex;
 use std::{error::Error, fmt::Display};
-pub struct OuputAnalyzer<'a> {
+pub struct OutputParser<'a> {
     response: &'a str,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct ResponseParts {
    pub pretext: String,
    pub  title: String,
@@ -144,9 +144,9 @@ impl From<&str> for OutputParserError {
 
 impl Error for OutputParserError {}
 
-impl<'a> OuputAnalyzer<'a> {
+impl<'a> OutputParser<'a> {
     pub fn new(response: &'a str) -> Self {
-        OuputAnalyzer { response }
+        OutputParser { response }
     }
 
     fn flush_buffer_to(buffer: &mut String, dst: &mut String) {
@@ -357,7 +357,7 @@ There are 3 exits:
 
 What do you do?
 "#;
-        let op = OuputAnalyzer::new(paragraph);
+        let op = OutputParser::new(paragraph);
         match op.parse() {
             Ok(result) => {
                 assert_eq!(result.title, "Twisty passages");
@@ -398,7 +398,7 @@ There are 2 exits:
 
 What do you do?
 "#;
-        let op = OuputAnalyzer::new(paragraph);
+        let op = OutputParser::new(paragraph);
         match op.parse() {
             Ok(result) => {
                 assert_eq!(result.title, "Foothills");
@@ -432,7 +432,7 @@ The self-test completion code is: jGxkvqlwrGNE"#);
 
     What do you do?
 "#;
-        let op = OuputAnalyzer::new(paragraph);
+        let op = OutputParser::new(paragraph);
         match op.parse() {
             Ok(result) => {
                 assert_eq!(result.title, "Foothills");
@@ -467,7 +467,7 @@ The self-test completion code is: jGxkvqlwrGNE"#);
     What do you do?
     /show_state
 "#;
-        let op = OuputAnalyzer::new(paragraph);
+        let op = OutputParser::new(paragraph);
         match op.parse() {
             Ok(result) => {
                 assert_eq!(result.title, "Foothills");
@@ -494,7 +494,7 @@ Dropped.
 What do you do?
 
 "#;
-        let op = OuputAnalyzer::new(paragraph);
+        let op = OutputParser::new(paragraph);
         match op.parse() {
             Ok(result) => {
                 assert!(result.title.is_empty());
@@ -520,7 +520,7 @@ Taken.
 
 What do you do?
 "#;
-        let op = OuputAnalyzer::new(paragraph);
+        let op = OutputParser::new(paragraph);
         match op.parse() {
             Ok(result) => {
                 assert!(result.title.is_empty());
@@ -544,7 +544,7 @@ Taken.
 
 What do you do?
 "#;
-        let op = OuputAnalyzer::new(paragraph);
+        let op = OutputParser::new(paragraph);
         match op.parse() {
             Ok(result) => {
                 assert!(result.title.is_empty());
@@ -570,7 +570,7 @@ Your inventory:
 
 What do you do?
 "#;
-        let op = OuputAnalyzer::new(paragraph);
+        let op = OutputParser::new(paragraph);
         match op.parse() {
             Ok(result) => {
                 assert!(!result.dont_understand);
@@ -597,7 +597,7 @@ Your inventory:
 
 What do you do?
 "#;
-        let op = OuputAnalyzer::new(paragraph);
+        let op = OutputParser::new(paragraph);
         match op.parse() {
             Ok(result) => {
                 assert!(!result.dont_understand);
@@ -620,7 +620,7 @@ What do you do?
 
     What do you do?
 "#;
-        let op = OuputAnalyzer::new(paragraph);
+        let op = OutputParser::new(paragraph);
         match op.parse() {
             Ok(result) => {
                 assert!(result.dont_understand);
