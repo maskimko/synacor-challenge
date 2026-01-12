@@ -1,6 +1,6 @@
-use log::{trace, debug};
+use log::{trace, debug, error};
 use regex::Regex;
-use std::error::Error;
+use std::{error::Error, fmt::Display};
 pub struct OuputAnalyzer<'a> {
     response: &'a str,
 }
@@ -10,11 +10,48 @@ pub struct ResponseParts {
    pub pretext: String,
    pub  title: String,
    pub message: String,
+    pub inventory: Vec<String>,
    pub things_of_interest: Vec<String>,
    pub exits: Vec<String>,
     pub dont_understand: bool,
 }
 
+fn is_slash_help_title(line: &str) -> bool {
+    line.trim() == "*** Available slash '/' commands: ***"
+}
+fn is_show_state_command(line: &str) -> bool {
+    line.trim() == "***         Virtual Machine State         ***"
+}
+fn is_inventory_title(line: &str) -> bool {
+    line.trim() == "Your inventory:"
+}
+
+fn is_replay_commands(line: &str) -> Result<u16, Box<dyn Error>> {
+    let re = Regex::new(r"replay commands  \(size: +(?<size>.+)\):")?;
+    let Some(capture) = re.captures(line) else {
+        return Err("no match".into());
+    };
+    let hist_size_val: &str = &capture["size"];
+    if hist_size_val == "N/A" {
+        Ok(0)
+    } else {
+    let hist_size: u16 = capture["size"].parse::<u16>()?;
+    Ok(hist_size)
+    }
+}
+fn is_commands_history(line: &str) -> Result<u16, Box<dyn Error>> {
+    let re = Regex::new(r"commands history  \(size: +(?<size>.+)\):")?;
+    let Some(capture) = re.captures(line) else {
+        return Err("no match".into());
+    };
+    let hist_size_val: &str = &capture["size"];
+    if hist_size_val == "N/A" {
+        Ok(0)
+    } else {
+    let hist_size: u16 = capture["size"].parse::<u16>()?;
+    Ok(hist_size)
+    }
+}
 fn is_message_title(line: &str) -> Result<String, Box<dyn Error>> {
     let re = Regex::new(r"== (?<title>.*) ==")?;
     let Some(capture) = re.captures(line) else {
@@ -41,8 +78,23 @@ fn is_last_question_line(line: &str) -> bool {
 fn is_do_not_understand(line: &str) -> bool {
     line.trim() == "I don't understand; try 'help' for instructions."
 }
-fn is_slash_command(line: &str) -> bool {
-    line.trim_start().starts_with("/")
+fn should_skip(line: &str) -> bool {
+    line.trim().is_empty() || line.trim_start().starts_with("/")
+}
+fn check_for_slash_command_output(line: &str, parsed: usize) -> Result<(), OutputParserError> {
+            if is_commands_history(line).is_ok() {
+               return Err("/show_history command".into()) 
+            } else if is_slash_help_title(line) {
+               return Err("/help command".into()) 
+            } else if  is_replay_commands(line).is_ok() {
+               return Err("/show_replay command".into()) 
+            } else if  is_show_state_command(line) {
+               return Err("/show_state command".into()) 
+            } else if parsed == 0 && line.starts_with("/") {
+                error!("unexpected first line with leading slash '/': {}", line);
+                return Err("unexpecred slash line".into());
+            }
+    Ok(())
 }
 
 fn is_item(line: &str) -> Result<String, Box<dyn Error>> {
@@ -59,17 +111,60 @@ enum MessageSections {
     Pretext,
     Message,
     Things,
+    Inventory,
     Exits,
     AfterPrompt,
     DoNotUnderstand,
 }
 
+#[derive(Debug)]
+pub enum OutputParserError {
+    SlashCommand(String),
+    Generic(Box<dyn Error>),
+}
+
+impl Display for OutputParserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+           OutputParserError::SlashCommand(msg) => write!(f, "{}", msg),
+            OutputParserError::Generic(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl From<&str> for OutputParserError {
+    fn from(value: &str) -> Self {
+        if value.starts_with("/") {
+            OutputParserError::SlashCommand(value.to_string())
+        } else {
+            OutputParserError::Generic(value.into())
+        }
+    }
+}
+
+impl Error for OutputParserError {}
+
 impl<'a> OuputAnalyzer<'a> {
     pub fn new(response: &'a str) -> Self {
         OuputAnalyzer { response }
     }
-    pub fn parse(&self) -> Result<ResponseParts, String> {
-        let response_lines = self.response.lines();
+
+    fn flush_buffer_to(buffer: &mut String, dst: &mut String) {
+        let trimmed = buffer.trim();
+        if !trimmed.is_empty() {
+            dst.push_str(trimmed);
+            buffer.clear();
+        }
+    }
+    fn flush_line(buffer: &mut String, line: &str) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        buffer.push_str(trimmed);
+        buffer.push('\n');
+    }
+    pub fn parse(&self) -> Result<ResponseParts, OutputParserError> {
         let mut parsed_lines = 0;
         let mut buffer = String::new();
         let mut pretext = String::new();
@@ -78,28 +173,34 @@ impl<'a> OuputAnalyzer<'a> {
         let mut message = String::new();
         let mut things = vec![];
         let mut exits = vec![];
+        let mut inventory = vec![];
         let mut exits_num = 0;
-        let mut lines_it = response_lines.into_iter();
         let mut dont_understand = false;
-        while let Some(line) = lines_it.next() {
-            if let Ok(t) = is_message_title(line)
+        for line in self.response.lines() {
+            check_for_slash_command_output(line,parsed_lines)?;
+            if should_skip(line) {
+                // Do not store empty lines or slash commands in analysis
+                continue;
+            } else if let Ok(t) = is_message_title(line)
                 && section == MessageSections::Pretext
             {
-                eprintln!("got message title");
+                //eprintln!("got message title");
                 trace!("encounter message title");
                 section = MessageSections::Message;
-                pretext.push_str(buffer.as_str().trim_end());
-                buffer.clear();
+                Self::flush_buffer_to(&mut buffer, &mut pretext);
                 message_title.push_str(&t);
             } else if is_things_title(line) && section == MessageSections::Message {
                 trace!("encounter things title");
                 section = MessageSections::Things;
-                message.push_str(buffer.trim_end());
-                buffer.clear();
+                Self::flush_buffer_to(&mut buffer, &mut message);
+            } else if is_inventory_title(line) && section == MessageSections::Pretext {
+                trace!("encounter inventory title");
+                section = MessageSections::Inventory;
+                Self::flush_buffer_to(&mut buffer, &mut pretext);
             } else if let Ok(exits) = is_exit_title(line)
                 && (section == MessageSections::Things || section == MessageSections::Message)
             {
-                eprintln!("got exit title");
+                //eprintln!("got exit title");
                 trace!("encounter exit title");
                 exits_num = exits;
                 match section {
@@ -124,28 +225,26 @@ impl<'a> OuputAnalyzer<'a> {
                 section = MessageSections::Exits;
             } else if is_last_question_line(line) {
                 trace!("encounter last question line");
+                if section == MessageSections::Pretext {
+                    Self::flush_buffer_to(&mut buffer, &mut pretext);
+                }
                 section = MessageSections::AfterPrompt;
-            } else if is_do_not_understand(line) {     
+            } else if is_do_not_understand(line) {
                 trace!("encounter 'do not understand' line");
                 section = MessageSections::DoNotUnderstand;
                 dont_understand = true;
-                if !buffer.trim().is_empty() {
-                pretext.push_str(buffer.trim());
-                buffer.clear();
-                pretext.push('\n');
-                }
+                Self::flush_buffer_to(&mut buffer, &mut pretext);
                 pretext.push_str(line.trim());
-            } else if is_slash_command(line) {     
-                // Do not store slash commands in analysis
-                continue;
-            } else {
-                if let Ok(val) = is_item(line) {
+            } else if let Ok(val) = is_item(line) {
                     match section {
                         MessageSections::Things => {
                             things.push(val);
                         }
                         MessageSections::Exits => {
                             exits.push(val);
+                        }
+                        MessageSections::Inventory => {
+                            inventory.push(val);
                         }
                         MessageSections::Pretext => {
                             return Err("items should not encounter in pretext".into());
@@ -162,10 +261,9 @@ impl<'a> OuputAnalyzer<'a> {
                         }
                     }
                 } else {
-                    buffer.push_str(line);
-                    buffer.push('\n');
+Self::flush_line(&mut buffer, line);
                 }
-            }
+            
             parsed_lines += 1;
         }
         assert_eq!(
@@ -186,6 +284,7 @@ impl<'a> OuputAnalyzer<'a> {
             message,
             exits,
             dont_understand,
+            inventory,
             things_of_interest: things,
             title: message_title,
         })
@@ -272,7 +371,7 @@ What do you do?
                 );
             }
             Err(parse_err) => {
-                assert!(false, "failed to parse message. Error: {}", parse_err);
+                panic!( "failed to parse message. Error: {}", parse_err);
             }
         }
     }
@@ -307,9 +406,7 @@ What do you do?
                 assert_eq!(result.pretext, r#"Welcome to the Synacor Challenge!
 Please record your progress by putting codes like
 this one into the challenge website: uxlzSuIDThsw
-
 Executing self-test...
-
 self-test complete, all tests pass
 The self-test completion code is: jGxkvqlwrGNE"#);
                 assert_eq!(result.things_of_interest.len(), 1);
@@ -320,7 +417,7 @@ The self-test completion code is: jGxkvqlwrGNE"#);
                 );
             }
             Err(parse_err) => {
-                assert!(false, "failed to parse message. Error: {}", parse_err);
+                panic!( "failed to parse message. Error: {}", parse_err);
             }
         }
     }
@@ -343,13 +440,13 @@ The self-test completion code is: jGxkvqlwrGNE"#);
                 assert!(result.pretext.is_empty());
                 assert_eq!(result.things_of_interest.len(), 0);
                 assert_eq!(
-                    result.message, "    As you begin to leave, you feel the urge for adventure pulling you back...",
+                    result.message, "As you begin to leave, you feel the urge for adventure pulling you back...",
                     "Parsed object is {:?}",
                     result
                 );
             }
             Err(parse_err) => {
-                assert!(false, "failed to parse message. Error: {}", parse_err);
+                panic!( "failed to parse message. Error: {}", parse_err);
             }
         }
     }
@@ -378,16 +475,144 @@ The self-test completion code is: jGxkvqlwrGNE"#);
                 assert_eq!(result.pretext, "I don't understand; try 'help' for instructions.");
                 assert_eq!(result.things_of_interest.len(), 0);
                 assert_eq!(
-                    result.message, "    As you begin to leave, you feel the urge for adventure pulling you back...", "Parsed object is {:?}",
+                    result.message, "As you begin to leave, you feel the urge for adventure pulling you back...", "Parsed object is {:?}",
                     result
                 );
+                assert!(result.dont_understand);
             }
             Err(parse_err) => {
-                assert!(false, "failed to parse message. Error: {}", parse_err);
+                panic!( "failed to parse message. Error: {}", parse_err);
+            }
+        }
+    }
+    #[test]
+    fn test_drop_short() {
+        let paragraph = r#"
+
+Dropped.
+
+What do you do?
+
+"#;
+        let op = OuputAnalyzer::new(paragraph);
+        match op.parse() {
+            Ok(result) => {
+                assert!(result.title.is_empty());
+                assert_eq!(result.exits.len(), 0);
+                assert_eq!(result.pretext, "Dropped.", "Parsed object is: {:?}", result);
+                assert_eq!(result.things_of_interest.len(), 0);
+                assert!( result.message.is_empty(), "Parsed object is {:?}", result);
+                assert!(!result.dont_understand);
+            }
+            Err(parse_err) => {
+                panic!( "failed to parse message. Error: {}", parse_err);
             }
         }
     }
 
+    #[test]
+    fn test_take_with_input() {
+        let paragraph = r#"
+take tablet
+
+
+Taken.
+
+What do you do?
+"#;
+        let op = OuputAnalyzer::new(paragraph);
+        match op.parse() {
+            Ok(result) => {
+                assert!(result.title.is_empty());
+                assert_eq!(result.exits.len(), 0);
+                assert_eq!(result.pretext, "take tablet\nTaken.");
+                assert_eq!(result.things_of_interest.len(), 0);
+                assert!( result.message.is_empty(), "Parsed object is {:?}", result);
+                assert!(!result.dont_understand);
+            }
+            Err(parse_err) => {
+                panic!( "failed to parse message. Error: {}", parse_err);
+            }
+        }
+    }
+    #[test]
+    fn test_take() {
+        let paragraph = r#"
+
+
+Taken.
+
+What do you do?
+"#;
+        let op = OuputAnalyzer::new(paragraph);
+        match op.parse() {
+            Ok(result) => {
+                assert!(result.title.is_empty());
+                assert_eq!(result.exits.len(), 0);
+                assert_eq!(result.pretext, "Taken.");
+                assert_eq!(result.things_of_interest.len(), 0);
+                assert!( result.message.is_empty(), "Parsed object is {:?}", result);
+                assert!(!result.dont_understand);
+            }
+            Err(parse_err) => {
+                panic!( "failed to parse message. Error: {}", parse_err);
+            }
+        }
+    }
+
+    #[test]
+    fn test_inv(){
+        let paragraph = r#"
+
+
+Your inventory:
+- tablet
+
+What do you do?
+"#;
+        let op = OuputAnalyzer::new(paragraph);
+        match op.parse() {
+            Ok(result) => {
+                assert!(!result.dont_understand);
+                assert!( result.pretext.is_empty(), "Parsed object is {:?}", result);
+                assert_eq!(result.title, "");
+                assert_eq!(result.exits.len(), 0);
+                assert_eq!(result.inventory.len(), 1);
+                assert_eq!(result.things_of_interest.len(), 0);
+                assert!( result.message.is_empty(), "Parsed object is {:?}", result);
+            }
+            Err(parse_err) => {
+                panic!( "failed to parse message. Error: {}", parse_err);
+            }
+        }
+    }
+    #[test]
+    fn test_inv_input(){
+        let paragraph = r#"
+inv
+
+
+Your inventory:
+- tablet
+
+What do you do?
+"#;
+        let op = OuputAnalyzer::new(paragraph);
+        match op.parse() {
+            Ok(result) => {
+                assert!(!result.dont_understand);
+                assert_eq!( result.pretext, "inv", "Parsed object is {:?}", result);
+                assert_eq!(result.title, "");
+                assert_eq!(result.exits.len(), 0);
+                assert_eq!(result.inventory.len(), 1);
+                assert_eq!(result.things_of_interest.len(), 0);
+                assert!( result.message.is_empty(), "Parsed object is {:?}", result);
+            }
+            Err(parse_err) => {
+                panic!( "failed to parse message. Error: {}", parse_err);
+            }
+        }
+    }
     #[test]
     fn test_do_not_understand() {
         let paragraph = r#"
@@ -406,7 +631,7 @@ The self-test completion code is: jGxkvqlwrGNE"#);
                 assert!( result.message.is_empty(), "Parsed object is {:?}", result);
             }
             Err(parse_err) => {
-                assert!(false, "failed to parse message. Error: {}", parse_err);
+                panic!( "failed to parse message. Error: {}", parse_err);
             }
         }
     }
