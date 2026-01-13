@@ -1,0 +1,111 @@
+***         Virtual Machine State         ***
+============================================
+halt     : false
+rom size : 65536
+registers:
+  -------------------------------------------
+  reg 0: 25986     
+  reg 1: 25974     
+  reg 2: 26006     
+  reg 3: 0         
+  reg 4: 10        
+  reg 5: 11        
+  reg 6: 0         
+  reg 7: 0         
+  -------------------------------------------
+stack      (size:  10):
+  +++++++++++++++++++++++++++++++++++++++++++
+  [9: 0         ]
+  [8: 101       ]
+  [7: 5         ]
+  [6: 0         ]
+  [5: 32        ]
+  [4: 2826      ]
+  [3: 1         ]
+  [2: 6124      ]
+  [1: 16        ]
+  [0: 6080      ]
+  +++++++++++++++++++++++++++++++++++++++++++
+replay commands  (size: N/A):
+commands history  (size:  24):
+  ...........................................
+  [0: go south       ]
+  [1: go north       ]
+  [2: take tablet    ]
+  [3: look tablet    ]
+  [4: use tablet     ]
+  [5: look           ]
+  [6: go doorway     ]
+  [7: /show_state    ]
+  [8: look           ]
+  [9: go north       ]
+  [10: go north       ]
+  [11: go bridge      ]
+  [12: continue       ]
+  [13: go down        ]
+  [14: go west        ]
+  [15: go east        ]
+  [16: go east        ]
+  [17: take empty lantern]
+  [18: look empty lantern]
+  [19: look           ]
+  [20: go west        ]
+  [21: /save_history  ]
+  [22: /show_state    ]
+  [23: /help          ]
+  ...........................................
+position : addr[1798 (0xe0c)]
+____________________________________________
+record out: N/A
+Maze Analyzer:
+  ###########################################
+     0  .......................................
+  ResponseParts { pretext: "Welcome to the Synacor Challenge!\nPlease record your progress by putting codes like\nthis one into the challenge website: uxlzSuIDThsw\nExecuting self-test...\nself-test complete, all tests pass\nThe self-test completion code is: jGxkvqlwrGNE", title: "Foothills", message: "You find yourself standing at the base of an enormous mountain.  At its base to the north, there is a massive doorway.  A sign nearby reads \"Keep out!  Definitely no treasure within!\"", inventory: [], things_of_interest: ["tablet"], exits: ["doorway", "south"], dont_understand: false }
+     1  .......................................
+  ResponseParts { pretext: "", title: "Foothills", message: "As you begin to leave, you feel the urge for adventure pulling you back...", inventory: [], things_of_interest: [], exits: ["north"], dont_understand: false }
+     2  .......................................
+  ResponseParts { pretext: "", title: "Foothills", message: "You find yourself standing at the base of an enormous mountain.  At its base to the north, there is a massive doorway.  A sign nearby reads \"Keep out!  Definitely no treasure within!\"", inventory: [], things_of_interest: ["tablet"], exits: ["doorway", "south"], dont_understand: false }
+     3  .......................................
+  ResponseParts { pretext: "Taken.", title: "", message: "", inventory: [], things_of_interest: [], exits: [], dont_understand: false }
+     4  .......................................
+  ResponseParts { pretext: "The tablet seems appropriate for use as a writing surface but is unfortunately blank.  Perhaps you should USE it as a writing surface...", title: "", message: "", inventory: [], things_of_interest: [], exits: [], dont_understand: false }
+     5  .......................................
+  ResponseParts { pretext: "You find yourself writing \"QDcZQJqVCzKL\" on the tablet.  Perhaps it's some kind of code?", title: "", message: "", inventory: [], things_of_interest: [], exits: [], dont_understand: false }
+     6  .......................................
+  ResponseParts { pretext: "", title: "Foothills", message: "You find yourself standing at the base of an enormous mountain.  At its base to the north, there is a massive doorway.  A sign nearby reads \"Keep out!  Definitely no treasure within!\"", inventory: [], things_of_interest: [], exits: ["doorway", "south"], dont_understand: false }
+     7  .......................................
+  ResponseParts { pretext: "", title: "Dark cave", message: "This seems to be the mouth of a deep cave.  As you peer north into the darkness, you think you hear the echoes of bats deeper within.", inventory: [], things_of_interest: [], exits: ["north", "south"], dont_understand: false }
+     8  .......................................
+  ResponseParts { pretext: "I don't understand; try 'help' for instructions.", title: "", message: "", inventory: [], things_of_interest: [], exits: [], dont_understand: true }
+     9  .......................................
+  ResponseParts { pretext: "", title: "Dark cave", message: "This seems to be the mouth of a deep cave.  As you peer north into the darkness, you think you hear the echoes of bats deeper within.", inventory: [], things_of_interest: [], exits: ["north", "south"], dont_understand: false }
+    10  .......................................
+  ResponseParts { pretext: "", title: "Dark cave", message: "The cave is somewhat narrow here, and the light from the doorway to the south is quite dim.", inventory: [], things_of_interest: [], exits: ["north", "south"], dont_understand: false }
+    11  .......................................
+  ResponseParts { pretext: "", title: "Dark cave", message: "The cave acoustics dramatically change as you find yourself at a legde above a large chasm.  There is barely enough light here to notice a rope bridge leading out into the dark emptiness.", inventory: [], things_of_interest: [], exits: ["bridge", "south"], dont_understand: false }
+    12  .......................................
+  ResponseParts { pretext: "", title: "Rope bridge", message: "This rope bridge creaks as you walk along it.  You aren't sure how old it is, or whether it can even support your weight.", inventory: [], things_of_interest: [], exits: ["continue", "back"], dont_understand: false }
+    13  .......................................
+  ResponseParts { pretext: "", title: "Falling through the air!", message: "As you continue along the bridge, it snaps!  You try to grab the bridge, but it evades your grasp in the darkness.  You are plummeting quickly downward into the chasm...", inventory: [], things_of_interest: [], exits: ["down"], dont_understand: false }
+    14  .......................................
+  ResponseParts { pretext: "", title: "Moss cavern", message: "You are standing in a large cavern full of bioluminescent moss.  It must have broken your fall!  The cavern extends to the east and west; at the west end, you think you see a passage leading out of the cavern.", inventory: [], things_of_interest: [], exits: ["west", "east"], dont_understand: false }
+    15  .......................................
+  ResponseParts { pretext: "", title: "Moss cavern", message: "You are standing in a large cavern full of bioluminescent moss.  The cavern extends to the east.  There is a crevise in the rocks which opens into a passage.", inventory: [], things_of_interest: [], exits: ["east", "passage"], dont_understand: false }
+    16  .......................................
+  ResponseParts { pretext: "", title: "Moss cavern", message: "You are standing in a large cavern full of bioluminescent moss.  It must have broken your fall!  The cavern extends to the east and west; at the west end, you think you see a passage leading out of the cavern.", inventory: [], things_of_interest: [], exits: ["west", "east"], dont_understand: false }
+    17  .......................................
+  ResponseParts { pretext: "", title: "Moss cavern", message: "You are standing in a large cavern full of bioluminescent moss.  The cavern extends to the west.", inventory: [], things_of_interest: ["empty lantern"], exits: ["west"], dont_understand: false }
+    18  .......................................
+  ResponseParts { pretext: "Taken.", title: "", message: "", inventory: [], things_of_interest: [], exits: [], dont_understand: false }
+    19  .......................................
+  ResponseParts { pretext: "The lantern seems to have quite a bit of wear but appears otherwise functional.  It is, however, sad that it is out of oil.", title: "", message: "", inventory: [], things_of_interest: [], exits: [], dont_understand: false }
+    20  .......................................
+  ResponseParts { pretext: "", title: "Moss cavern", message: "You are standing in a large cavern full of bioluminescent moss.  The cavern extends to the west.", inventory: [], things_of_interest: [], exits: ["west"], dont_understand: false }
+    21  .......................................
+  ResponseParts { pretext: "", title: "Moss cavern", message: "You are standing in a large cavern full of bioluminescent moss.  It must have broken your fall!  The cavern extends to the east and west; at the west end, you think you see a passage leading out of the cavern.", inventory: [], things_of_interest: [], exits: ["west", "east"], dont_understand: false }
+    22  .......................................
+  ResponseParts { pretext: "I don't understand; try 'help' for instructions.", title: "", message: "", inventory: [], things_of_interest: [], exits: [], dont_understand: true }
+    23  .......................................
+  ResponseParts { pretext: "I don't understand; try 'help' for instructions.", title: "", message: "", inventory: [], things_of_interest: [], exits: [], dont_understand: true }
+  ###########################################
+=============================================

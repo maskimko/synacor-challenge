@@ -1,0 +1,66 @@
+/record_output
+
+I don't understand; try 'help' for instructions.
+
+What do you do?
+/show_history
+
+I don't understand; try 'help' for instructions.
+
+What do you do?
+look
+
+== Foothills ==
+You find yourself standing at the base of an enormous mountain.  At its base to the north, there is a massive doorway.  A sign nearby reads "Keep out!  Definitely no treasure within!"
+
+There are 2 exits:
+- doorway
+- south
+
+What do you do?
+look tablet
+
+The tablet seems appropriate for use as a writing surface but is unfortunately blank.  Perhaps you should USE it as a writing surface...
+
+What do you do?
+/help
+
+I don't understand; try 'help' for instructions.
+
+What do you do?
+/show_replay
+
+I don't understand; try 'help' for instructions.
+
+What do you do?
+/show_state
+
+I don't understand; try 'help' for instructions.
+
+What do you do?
+/help
+
+I don't understand; try 'help' for instructions.
+
+What do you do?
+/record_output
+
+I don't understand; try 'help' for instructions.
+
+What do you do?
+/dump_state
+
+I don't understand; try 'help' for instructions.
+
+What do you do?
+inv
+
+Your inventory:
+- tablet
+
+What do you do?
+drop tablet
+
+Dropped.
+
+What do you do?

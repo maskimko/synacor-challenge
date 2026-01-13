@@ -1,14 +1,15 @@
 use crate::output_parser::{OutputParser, ResponseParts};
-use std::collections::{HashMap, VecDeque};
+use derivative::Derivative;
+use log::debug;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt;
-
-use log::debug;
 use std::rc::{Rc, Weak};
 
 #[derive(Debug)]
 pub struct MazeAnalyzer {
-    nodes: HashMap<Rc<Node>, Option<u16>>,
+    nodes: HashMap<Rc<Node>, (u16, Option<Rc<Node>>)>,
+    completed_nodes: HashSet<Rc<Node>>,
     response_buffer: String,
     first: Option<Rc<Node>>,
     head: Option<Rc<Node>>,
@@ -19,37 +20,93 @@ pub struct MazeAnalyzer {
     last_command_num: u16,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Derivative)]
+#[derivative(Debug, PartialEq, Eq, Hash)]
 struct Node {
     response: ResponseParts,
-    next_command: String,
     previous: Option<Rc<Node>>,
-    //children: Vec<Weak<Node>>,
+    #[derivative(PartialEq = "ignore")]
+    #[derivative(Hash = "ignore")]
+    children: Vec<Weak<Node>>,
+    #[derivative(PartialEq = "ignore")]
+    #[derivative(Hash = "ignore")]
+    // Commands to execute
+    edges_to_visit: Vec<String>,
+    #[derivative(PartialEq = "ignore")]
+    #[derivative(Hash = "ignore")]
+    // Executed commands
+    visited: Vec<String>,
+    #[derivative(PartialEq = "ignore")]
+    #[derivative(Hash = "ignore")]
     steps: u16,
 }
 
 impl Node {
-    fn new(rp: ResponseParts, command: &str) -> Self {
-        Node::new_with_prev(rp, None, 0, command)
+    fn new(rp: ResponseParts) -> Self {
+        Node::new_with_prev(rp, None)
     }
-    fn new_with_prev(
-        response: ResponseParts,
-        previous: Option<Rc<Node>>,
-        steps: u16,
-        command: &str,
-    ) -> Self {
-        Node {
-            response,
-            steps,
-            previous,
-            next_command: command.to_string(),
+    fn new_with_prev(mut response: ResponseParts, previous: Option<Rc<Node>>) -> Self {
+        let edges = Self::get_commands_from_response(&response);
+        match previous {
+            Some(prev) => {
+                let steps = prev.steps + 1;
+                let items = prev.response.inventory.clone();
+                response.inventory = items;
+                let node = Node {
+                    edges_to_visit: edges,
+                    response,
+                    steps,
+                    previous: Some(prev),
+                    children: vec![],
+                    // Commands to execute
+                    visited: vec![],
+                };
+                node
+            }
+            None => {
+                Node {
+                    edges_to_visit: edges,
+                    response,
+                    steps: u16::MAX,
+                    previous: None,
+                    children: vec![],
+                    // Commands to execute
+                    visited: vec![],
+                }
+            }
         }
+    }
+
+    fn visit(&mut self, command: &str) {
+        self.visited.push(command.to_string());
     }
 
     fn previous(&self) -> Option<Rc<Self>> {
         self.previous.clone()
     }
 
+    fn get_inventory_from_response(r: &ResponseParts) -> Vec<String> {
+        let actions = ["look", "use", "take", "drop"];
+        r.inventory
+            .iter()
+            .flat_map(|i| actions.iter().map(move |a| format!("{} {}", a, i)))
+            .collect()
+    }
+    fn get_exits_from_response(r: &ResponseParts) -> Vec<String> {
+        r.exits.iter().map(|ex| format!("go {}", ex)).collect()
+    }
+
+    /// First we look, and then try to use the inventory, and then traverse outputs, and as a last
+    /// resort use help
+    fn get_commands_from_response(r: &ResponseParts) -> Vec<String> {
+        [
+            &[String::from("help")],
+            Self::get_exits_from_response(r).as_slice(),
+            Self::get_inventory_from_response(r).as_slice(),
+            &["look".to_string()],
+        ]
+        .concat()
+    }
     //fn link_response(&self, rp: ResponseParts) -> Node {
     //    Node {
     //        response: rp,
@@ -66,19 +123,15 @@ impl Node {
 
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(
-            f,
-            "   |{:?} steps: {} next: {}",
-            self.response, self.steps, self.next_command
-        )?;
+        writeln!(f, "   |{:?} steps: {}", self.response, self.steps)?;
         let mut depth = 0;
         let mut previous: Option<Rc<Node>> = self.previous.clone();
         while let Some(prev) = previous {
             depth -= 1;
             writeln!(
                 f,
-                " {:>03}| {:?} steps: {}, next: {}",
-                depth, prev.response, prev.steps, prev.next_command
+                " {:>03}| {:?} steps: {}",
+                depth, prev.response, prev.steps
             )?;
             previous = prev.previous.clone();
         }
@@ -98,6 +151,7 @@ impl MazeAnalyzer {
             solution_commands: None,
             commands_counter: 0,
             last_command_num: 0,
+            completed_nodes: HashSet::new(),
         }
     }
 
@@ -120,20 +174,19 @@ impl MazeAnalyzer {
         let resp_parts = oan.parse()?;
         match &self.head {
             Some(head) => {
-                let steps = head.steps + 1;
-
-                let head = Rc::new(Node::new_with_prev(
-                    resp_parts,
-                    Some(head.clone()),
-                    steps,
-                    command,
-                ));
-                self.nodes.insert(head.clone(), None);
-                self.head = Some(head);
+                head.visit(command);
+                let new_node = Node::new_with_prev(resp_parts, Some(head.clone()));
+                let steps = new_node.steps;
+                let new_head = Rc::new(new_node);
+                self.nodes
+                    .insert(new_head.clone(), (steps, Some(head.clone())));
+                self.head = Some(new_head);
             }
             None => {
-                let first = Rc::new(Node::new(resp_parts, command));
-                self.nodes.insert(first.clone(), None);
+                let mut node = Node::new(resp_parts);
+                node.steps = 0;
+                let first = Rc::new(node);
+                self.nodes.insert(first.clone(), (0, None));
                 self.first = Some(first.clone());
                 self.head = Some(first)
             }
@@ -232,32 +285,35 @@ impl MazeAnalyzer {
         .concat()
     }
 
+    fn validate_steps_left(&self, node: &Node) -> Result<(), String> {
+        if node.steps > self.steps_left {
+            return Err("exhausted steps".into());
+        }
+        Ok(())
+    }
+
     /// This function should traverse the maze and find the best route to the exit
     /// Return value shouwl be a vector of the commands to pass the maze
     pub fn search(&mut self, replay_buf: &mut VecDeque<char>) -> Result<Vec<String>, String> {
-        let commands = self.get_possible_commands();
         if self.head.is_none() {
-            return Err("maze analyzer does not have a head node".into());
+            return Err("maze analyzer must have a head node".into());
         }
         let node = self.head.clone().unwrap();
-        let node_steps = node.steps;
-        if node_steps > self.steps_left {
-            return Err("exhausted steps".into());
-        }
-        let steps = self.nodes[&node];
-        let should_push_commands: bool = steps.is_none() || node_steps < steps.unwrap_or(u16::MAX);
-        if should_push_commands {
-            self.nodes.insert(node, Some(node_steps));
-            commands
-                .into_iter()
-                .rev()
-                .for_each(|cmd| self.commands_queue.push_front(cmd));
-            // We pop exactly 1 command, because new node will give other commands
-            if let Some(cmd) = self.commands_queue.pop_front() {
-                cmd.chars().for_each(|c| replay_buf.push_back(c));
-                replay_buf.push_back('\n');
-                self.last_command_num = self.commands_counter;
+        self.validate_steps_left(&node)?;
+        if let Some((prev_hash_steps, previous_node)) = self.nodes.get(&node) {
+            if previous_node.is_none() || node.steps < *prev_hash_steps {
+                self.nodes
+                    .insert(node.clone(), (node.steps, previous_node.clone()));
+                node.edges_to_visit
+                    .iter()
+                    .for_each(|cmd| self.commands_queue.push_front(cmd.to_string()));
             }
+        }
+        // We pop exactly 1 command, because new node will give other commands
+        if let Some(cmd) = self.commands_queue.pop_front() {
+            cmd.chars().for_each(|c| replay_buf.push_back(c));
+            replay_buf.push_back('\n');
+            self.last_command_num = self.commands_counter;
         }
 
         Ok(vec![])
