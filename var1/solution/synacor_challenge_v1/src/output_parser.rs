@@ -1,4 +1,4 @@
-use log::{trace, debug, error};
+use log::{debug, error, trace};
 use regex::Regex;
 use std::{error::Error, fmt::Display};
 pub struct OutputParser<'a> {
@@ -7,12 +7,12 @@ pub struct OutputParser<'a> {
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct ResponseParts {
-   pub pretext: String,
-   pub  title: String,
-   pub message: String,
+    pub pretext: String,
+    pub title: String,
+    pub message: String,
     pub inventory: Vec<String>,
-   pub things_of_interest: Vec<String>,
-   pub exits: Vec<String>,
+    pub things_of_interest: Vec<String>,
+    pub exits: Vec<String>,
     pub dont_understand: bool,
 }
 
@@ -35,8 +35,8 @@ fn is_replay_commands(line: &str) -> Result<u16, Box<dyn Error>> {
     if hist_size_val == "N/A" {
         Ok(0)
     } else {
-    let hist_size: u16 = capture["size"].parse::<u16>()?;
-    Ok(hist_size)
+        let hist_size: u16 = capture["size"].parse::<u16>()?;
+        Ok(hist_size)
     }
 }
 fn is_commands_history(line: &str) -> Result<u16, Box<dyn Error>> {
@@ -48,8 +48,8 @@ fn is_commands_history(line: &str) -> Result<u16, Box<dyn Error>> {
     if hist_size_val == "N/A" {
         Ok(0)
     } else {
-    let hist_size: u16 = capture["size"].parse::<u16>()?;
-    Ok(hist_size)
+        let hist_size: u16 = capture["size"].parse::<u16>()?;
+        Ok(hist_size)
     }
 }
 fn is_message_title(line: &str) -> Result<String, Box<dyn Error>> {
@@ -82,18 +82,18 @@ fn should_skip(line: &str) -> bool {
     line.trim().is_empty() || line.trim_start().starts_with("/")
 }
 fn check_for_slash_command_output(line: &str, parsed: usize) -> Result<(), OutputParserError> {
-            if is_commands_history(line).is_ok() {
-               return Err("/show_history command".into()) 
-            } else if is_slash_help_title(line) {
-               return Err("/help command".into()) 
-            } else if  is_replay_commands(line).is_ok() {
-               return Err("/show_replay command".into()) 
-            } else if  is_show_state_command(line) {
-               return Err("/show_state command".into()) 
-            } else if parsed == 0 && line.starts_with("/") {
-                error!("unexpected first line with leading slash '/': {}", line);
-                return Err("unexpecred slash line".into());
-            }
+    if is_commands_history(line).is_ok() {
+        return Err("/show_history command".into());
+    } else if is_slash_help_title(line) {
+        return Err("/help command".into());
+    } else if is_replay_commands(line).is_ok() {
+        return Err("/show_replay command".into());
+    } else if is_show_state_command(line) {
+        return Err("/show_state command".into());
+    } else if parsed == 0 && line.starts_with("/") {
+        error!("unexpected first line with leading slash '/': {}", line);
+        return Err("unexpecred slash line".into());
+    }
     Ok(())
 }
 
@@ -126,7 +126,7 @@ pub enum OutputParserError {
 impl Display for OutputParserError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-           OutputParserError::SlashCommand(msg) => write!(f, "{}", msg),
+            OutputParserError::SlashCommand(msg) => write!(f, "{}", msg),
             OutputParserError::Generic(e) => write!(f, "{}", e),
         }
     }
@@ -177,7 +177,7 @@ impl<'a> OutputParser<'a> {
         let mut exits_num = 0;
         let mut dont_understand = false;
         for line in self.response.lines() {
-            check_for_slash_command_output(line,parsed_lines)?;
+            check_for_slash_command_output(line, parsed_lines)?;
             if should_skip(line) {
                 // Do not store empty lines or slash commands in analysis
                 continue;
@@ -211,7 +211,8 @@ impl<'a> OutputParser<'a> {
                     MessageSections::Things => {
                         assert!(
                             buffer.trim().is_empty(),
-                            "buffer should be empty as 'things of interest' contains only items and no messages, but was {}", buffer
+                            "buffer should be empty as 'things of interest' contains only items and no messages, but was {}",
+                            buffer
                         );
                     }
                     _ => {
@@ -236,34 +237,34 @@ impl<'a> OutputParser<'a> {
                 Self::flush_buffer_to(&mut buffer, &mut pretext);
                 pretext.push_str(line.trim());
             } else if let Ok(val) = is_item(line) {
-                    match section {
-                        MessageSections::Things => {
-                            things.push(val);
-                        }
-                        MessageSections::Exits => {
-                            exits.push(val);
-                        }
-                        MessageSections::Inventory => {
-                            inventory.push(val);
-                        }
-                        MessageSections::Pretext => {
-                            return Err("items should not encounter in pretext".into());
-                        }
-                        MessageSections::Message => {
-                            debug!("message test is {}", self.response );
-                            return Err("items should not encounter in message text".into());
-                        }
-                        MessageSections::AfterPrompt => {
-                            return Err("cannot contain any text after the question prompt".into());
-                        },
-                        MessageSections::DoNotUnderstand => {
-                            return Err("items should not encounter in error message".into());
-                        }
+                match section {
+                    MessageSections::Things => {
+                        things.push(val);
                     }
-                } else {
-Self::flush_line(&mut buffer, line);
+                    MessageSections::Exits => {
+                        exits.push(val);
+                    }
+                    MessageSections::Inventory => {
+                        inventory.push(val);
+                    }
+                    MessageSections::Pretext => {
+                        return Err("items should not encounter in pretext".into());
+                    }
+                    MessageSections::Message => {
+                        debug!("message test is {}", self.response);
+                        return Err("items should not encounter in message text".into());
+                    }
+                    MessageSections::AfterPrompt => {
+                        return Err("cannot contain any text after the question prompt".into());
+                    }
+                    MessageSections::DoNotUnderstand => {
+                        return Err("items should not encounter in error message".into());
+                    }
                 }
-            
+            } else {
+                Self::flush_line(&mut buffer, line);
+            }
+
             parsed_lines += 1;
         }
         assert_eq!(
@@ -274,7 +275,8 @@ Self::flush_line(&mut buffer, line);
         assert_eq!(
             exits_num as usize,
             exits.len(),
-            "declared exits number must match the parsed exits number Exits: {:?}", exits
+            "declared exits number must match the parsed exits number Exits: {:?}",
+            exits
         );
         if parsed_lines == 0 {
             return Err("nothing was parsed".into());
@@ -334,14 +336,14 @@ mod tests {
         let line = "- south";
         let res = is_item(line);
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(),"south")
+        assert_eq!(res.unwrap(), "south")
     }
     #[test]
     fn test_is_item_space() {
         let line = "    - north";
         let res = is_item(line);
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(),"north")
+        assert_eq!(res.unwrap(), "north")
     }
 
     #[test]
@@ -371,7 +373,7 @@ What do you do?
                 );
             }
             Err(parse_err) => {
-                panic!( "failed to parse message. Error: {}", parse_err);
+                panic!("failed to parse message. Error: {}", parse_err);
             }
         }
     }
@@ -403,21 +405,25 @@ What do you do?
             Ok(result) => {
                 assert_eq!(result.title, "Foothills");
                 assert_eq!(result.exits.len(), 2);
-                assert_eq!(result.pretext, r#"Welcome to the Synacor Challenge!
+                assert_eq!(
+                    result.pretext,
+                    r#"Welcome to the Synacor Challenge!
 Please record your progress by putting codes like
 this one into the challenge website: uxlzSuIDThsw
 Executing self-test...
 self-test complete, all tests pass
-The self-test completion code is: jGxkvqlwrGNE"#);
+The self-test completion code is: jGxkvqlwrGNE"#
+                );
                 assert_eq!(result.things_of_interest.len(), 1);
                 assert_eq!(
-                    result.message, "You find yourself standing at the base of an enormous mountain.  At its base to the north, there is a massive doorway.  A sign nearby reads \"Keep out!  Definitely no treasure within!\"",
+                    result.message,
+                    "You find yourself standing at the base of an enormous mountain.  At its base to the north, there is a massive doorway.  A sign nearby reads \"Keep out!  Definitely no treasure within!\"",
                     "Parsed object is {:?}",
                     result
                 );
             }
             Err(parse_err) => {
-                panic!( "failed to parse message. Error: {}", parse_err);
+                panic!("failed to parse message. Error: {}", parse_err);
             }
         }
     }
@@ -440,13 +446,14 @@ The self-test completion code is: jGxkvqlwrGNE"#);
                 assert!(result.pretext.is_empty());
                 assert_eq!(result.things_of_interest.len(), 0);
                 assert_eq!(
-                    result.message, "As you begin to leave, you feel the urge for adventure pulling you back...",
+                    result.message,
+                    "As you begin to leave, you feel the urge for adventure pulling you back...",
                     "Parsed object is {:?}",
                     result
                 );
             }
             Err(parse_err) => {
-                panic!( "failed to parse message. Error: {}", parse_err);
+                panic!("failed to parse message. Error: {}", parse_err);
             }
         }
     }
@@ -472,16 +479,21 @@ The self-test completion code is: jGxkvqlwrGNE"#);
             Ok(result) => {
                 assert_eq!(result.title, "Foothills");
                 assert_eq!(result.exits.len(), 1);
-                assert_eq!(result.pretext, "I don't understand; try 'help' for instructions.");
+                assert_eq!(
+                    result.pretext,
+                    "I don't understand; try 'help' for instructions."
+                );
                 assert_eq!(result.things_of_interest.len(), 0);
                 assert_eq!(
-                    result.message, "As you begin to leave, you feel the urge for adventure pulling you back...", "Parsed object is {:?}",
+                    result.message,
+                    "As you begin to leave, you feel the urge for adventure pulling you back...",
+                    "Parsed object is {:?}",
                     result
                 );
                 assert!(result.dont_understand);
             }
             Err(parse_err) => {
-                panic!( "failed to parse message. Error: {}", parse_err);
+                panic!("failed to parse message. Error: {}", parse_err);
             }
         }
     }
@@ -501,11 +513,11 @@ What do you do?
                 assert_eq!(result.exits.len(), 0);
                 assert_eq!(result.pretext, "Dropped.", "Parsed object is: {:?}", result);
                 assert_eq!(result.things_of_interest.len(), 0);
-                assert!( result.message.is_empty(), "Parsed object is {:?}", result);
+                assert!(result.message.is_empty(), "Parsed object is {:?}", result);
                 assert!(!result.dont_understand);
             }
             Err(parse_err) => {
-                panic!( "failed to parse message. Error: {}", parse_err);
+                panic!("failed to parse message. Error: {}", parse_err);
             }
         }
     }
@@ -527,11 +539,11 @@ What do you do?
                 assert_eq!(result.exits.len(), 0);
                 assert_eq!(result.pretext, "take tablet\nTaken.");
                 assert_eq!(result.things_of_interest.len(), 0);
-                assert!( result.message.is_empty(), "Parsed object is {:?}", result);
+                assert!(result.message.is_empty(), "Parsed object is {:?}", result);
                 assert!(!result.dont_understand);
             }
             Err(parse_err) => {
-                panic!( "failed to parse message. Error: {}", parse_err);
+                panic!("failed to parse message. Error: {}", parse_err);
             }
         }
     }
@@ -551,17 +563,17 @@ What do you do?
                 assert_eq!(result.exits.len(), 0);
                 assert_eq!(result.pretext, "Taken.");
                 assert_eq!(result.things_of_interest.len(), 0);
-                assert!( result.message.is_empty(), "Parsed object is {:?}", result);
+                assert!(result.message.is_empty(), "Parsed object is {:?}", result);
                 assert!(!result.dont_understand);
             }
             Err(parse_err) => {
-                panic!( "failed to parse message. Error: {}", parse_err);
+                panic!("failed to parse message. Error: {}", parse_err);
             }
         }
     }
 
     #[test]
-    fn test_inv(){
+    fn test_inv() {
         let paragraph = r#"
 
 
@@ -574,20 +586,20 @@ What do you do?
         match op.parse() {
             Ok(result) => {
                 assert!(!result.dont_understand);
-                assert!( result.pretext.is_empty(), "Parsed object is {:?}", result);
+                assert!(result.pretext.is_empty(), "Parsed object is {:?}", result);
                 assert_eq!(result.title, "");
                 assert_eq!(result.exits.len(), 0);
                 assert_eq!(result.inventory.len(), 1);
                 assert_eq!(result.things_of_interest.len(), 0);
-                assert!( result.message.is_empty(), "Parsed object is {:?}", result);
+                assert!(result.message.is_empty(), "Parsed object is {:?}", result);
             }
             Err(parse_err) => {
-                panic!( "failed to parse message. Error: {}", parse_err);
+                panic!("failed to parse message. Error: {}", parse_err);
             }
         }
     }
     #[test]
-    fn test_inv_input(){
+    fn test_inv_input() {
         let paragraph = r#"
 inv
 
@@ -601,15 +613,15 @@ What do you do?
         match op.parse() {
             Ok(result) => {
                 assert!(!result.dont_understand);
-                assert_eq!( result.pretext, "inv", "Parsed object is {:?}", result);
+                assert_eq!(result.pretext, "inv", "Parsed object is {:?}", result);
                 assert_eq!(result.title, "");
                 assert_eq!(result.exits.len(), 0);
                 assert_eq!(result.inventory.len(), 1);
                 assert_eq!(result.things_of_interest.len(), 0);
-                assert!( result.message.is_empty(), "Parsed object is {:?}", result);
+                assert!(result.message.is_empty(), "Parsed object is {:?}", result);
             }
             Err(parse_err) => {
-                panic!( "failed to parse message. Error: {}", parse_err);
+                panic!("failed to parse message. Error: {}", parse_err);
             }
         }
     }
@@ -624,61 +636,65 @@ What do you do?
         match op.parse() {
             Ok(result) => {
                 assert!(result.dont_understand);
-                assert_eq!( result.pretext, "I don't understand; try 'help' for instructions.", "Parsed object is {:?}", result);
+                assert_eq!(
+                    result.pretext, "I don't understand; try 'help' for instructions.",
+                    "Parsed object is {:?}",
+                    result
+                );
                 assert_eq!(result.title, "");
                 assert_eq!(result.exits.len(), 0);
                 assert_eq!(result.things_of_interest.len(), 0);
-                assert!( result.message.is_empty(), "Parsed object is {:?}", result);
+                assert!(result.message.is_empty(), "Parsed object is {:?}", result);
             }
             Err(parse_err) => {
-                panic!( "failed to parse message. Error: {}", parse_err);
+                panic!("failed to parse message. Error: {}", parse_err);
             }
         }
     }
     // TODO: write tests for this output
-    /* 
- == Foothills ==
-You find yourself standing at the base of an enormous mountain.  At its base to the north, there is a massive doorway.  A sign nearby reads "Keep out!  Definitely no treasure within!"
+    /*
+     == Foothills ==
+    You find yourself standing at the base of an enormous mountain.  At its base to the north, there is a massive doorway.  A sign nearby reads "Keep out!  Definitely no treasure within!"
 
-Things of interest here:
-- tablet
+    Things of interest here:
+    - tablet
 
-There are 2 exits:
-- doorway
-- south
+    There are 2 exits:
+    - doorway
+    - south
 
-What do you do?
-take tablet
-got message title
-got exit title
-
-
-Taken.
-
-What do you do?
-look tablet
+    What do you do?
+    take tablet
+    got message title
+    got exit title
 
 
-The tablet seems appropriate for use as a writing surface but is unfortunately blank.  Perhaps you should USE it as a writing surface...
+    Taken.
 
-What do you do?
-use tablet
-
-
-You find yourself writing "QDcZQJqVCzKL" on the tablet.  Perhaps it's some kind of code?
+    What do you do?
+    look tablet
 
 
-What do you do?
-go doorway
+    The tablet seems appropriate for use as a writing surface but is unfortunately blank.  Perhaps you should USE it as a writing surface...
+
+    What do you do?
+    use tablet
 
 
-== Dark cave ==
-This seems to be the mouth of a deep cave.  As you peer north into the darkness, you think you hear the echoes of bats deeper within.
+    You find yourself writing "QDcZQJqVCzKL" on the tablet.  Perhaps it's some kind of code?
 
-There are 2 exits:
-- north
-- south
 
-What do you do?
-*/
+    What do you do?
+    go doorway
+
+
+    == Dark cave ==
+    This seems to be the mouth of a deep cave.  As you peer north into the darkness, you think you hear the echoes of bats deeper within.
+
+    There are 2 exits:
+    - north
+    - south
+
+    What do you do?
+    */
 }

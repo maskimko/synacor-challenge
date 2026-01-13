@@ -1,5 +1,5 @@
 use colored::Colorize;
-use log::{debug, error, info, trace, Level};
+use log::{Level, debug, error, info, trace};
 use log::{log_enabled, warn};
 use std::collections::VecDeque;
 use std::error::Error;
@@ -19,6 +19,7 @@ mod output_parser;
 
 //const MAX: u16 = 32768; // The same as 1 << 15
 const MAX: u16 = 1 << 15;
+const PRINT_WIDTH: usize = 44;
 struct VM {
     halt: bool,
     memory: [u8; 1 << 16], // as there is 15 bit address space, but each address points to the 2
@@ -59,13 +60,8 @@ impl From<&Address> for Ptr {
     }
 }
 
+#[derive(Default)]
 struct Address(u16);
-
-impl Default for Address {
-    fn default() -> Self {
-        Address(0)
-    }
-}
 
 impl Address {
     fn new(value: u16) -> Self {
@@ -115,18 +111,11 @@ enum Data {
 }
 impl Data {
     fn is_register(&self) -> bool {
-        if let Data::Register(_) = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, Data::Register(_))
     }
+    #[allow(dead_code)]
     fn is_literal(&self) -> bool {
-        if let Data::LiteralValue(_) = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, Data::LiteralValue(_))
     }
 }
 
@@ -173,11 +162,7 @@ fn compose_value(byte_pair: (u8, u8)) -> u16 {
     let value = hb + lb;
     trace!(
         "  compose value {} ({:#x}) from bytes {:?} ({:#x}, {:#x})",
-        value,
-        value,
-        byte_pair,
-        byte_pair.0,
-        byte_pair.1
+        value, value, byte_pair, byte_pair.0, byte_pair.1
     );
     // If the value is greater than 32768 + 8 (MAX + number of registers), it will cause panic
     // anyway, so it makes sense to log it early
@@ -214,13 +199,9 @@ fn decompose_value(value: u16) -> (u8, u8) {
     let byte_pair: (u8, u8) = (lb as u8, hb as u8);
     trace!(
         "  decompose bytes {:?} ({:#x}, {:#x}) from value {} ({:#x}) ",
-        byte_pair,
-        byte_pair.0,
-        byte_pair.1,
-        value,
-        value
+        byte_pair, byte_pair.0, byte_pair.1, value, value
     );
-    return byte_pair;
+    byte_pair
 }
 
 fn validate_value(val: u16) -> bool {
@@ -228,7 +209,7 @@ fn validate_value(val: u16) -> bool {
 }
 /// This method takes a provided value validates it and packs it to Data
 fn pack_raw_value(v: u16) -> Data {
-    let data = match v {
+    match v {
         val if v < MAX => {
             trace!("  packing literal value '{}'", v);
             Data::LiteralValue(val)
@@ -240,9 +221,10 @@ fn pack_raw_value(v: u16) -> Data {
         }
         // Probably we can just return an error here
         _ => panic!("values bigger than 32776 are invalid"),
-    };
-    data
+    }
 }
+
+// TODO: delete it
 /// This function just converts Data to raw memory address
 fn unpack_data_to_raw_address(d: Data) -> u16 {
     let raw = match d {
@@ -278,7 +260,7 @@ impl fmt::Display for ArithmeticOperations {
     }
 }
 impl ArithmeticOperations {
-    fn get_instruction_name<'a>(&'a self) -> &'a str {
+    fn get_instruction_name(&self) -> &str {
         match self {
             ArithmeticOperations::Multiply => "mult",
             ArithmeticOperations::Add => "add",
@@ -305,7 +287,7 @@ impl<'b> aux::Commander<'b> for VM {
     }
     fn record_output(&mut self, p: &std::path::Path) -> Result<(), Box<dyn Error>> {
         if self.is_recording_active() {
-            return Err(format!("recording is already enabled to another file").into());
+            return Err("recording is already enabled to another file".into());
         }
         trace!("starting recording VM output to {}", p.display());
 
@@ -349,7 +331,7 @@ impl<'b> aux::Commander<'b> for VM {
                 "/save_history" => {
                     trace!("saving history of commands by demand");
                     // TODO: Provide an argument to this command
-                    const HISTORY_FILE: &'static str = "history.txt";
+                    const HISTORY_FILE: &str = "history.txt";
                     match self.save_commands_history(HISTORY_FILE) {
                         Ok(_) => eprintln!(
                             "successfully saved commands history to file {}",
@@ -368,7 +350,7 @@ impl<'b> aux::Commander<'b> for VM {
                 "/record_output" => {
                     // TODO: Provide an argument to this command
                     trace!("enabling output record by demand");
-                    const OUTPUT_FILE: &'static str = "output.txt";
+                    const OUTPUT_FILE: &str = "output.txt";
                     match self.record_output(Into::<PathBuf>::into(OUTPUT_FILE).as_path()) {
                         Ok(()) => eprintln!("output recording started"),
                         Err(e_err) => error!("failed to start output recording. Error: {}", e_err),
@@ -377,7 +359,7 @@ impl<'b> aux::Commander<'b> for VM {
                 "/dump_state" => {
                     trace!("dumping VM state by demand");
                     // TODO: Provide an argument to this command
-                    const STATE_FILE: &'static str = "vm_state.txt";
+                    const STATE_FILE: &str = "vm_state.txt";
                     match self.dump_state(Into::<PathBuf>::into(STATE_FILE).as_path()) {
                         Ok(()) => eprintln!("saved VM state to {}", STATE_FILE),
                         Err(st_err) => error!(
@@ -388,7 +370,7 @@ impl<'b> aux::Commander<'b> for VM {
                 }
                 "/dump_memory" => {
                     // TODO: Provide an argument to this command
-                    const RAM_FILE: &'static str = "vm_memory_dump.bin";
+                    const RAM_FILE: &str = "vm_memory_dump.bin";
                     match self.dump_memory(&Into::<PathBuf>::into(RAM_FILE)) {
                         Ok(()) => eprintln!("saved VM RAM to {}", RAM_FILE),
                         Err(m_err) => {
@@ -400,16 +382,6 @@ impl<'b> aux::Commander<'b> for VM {
                     let allowed_steps = 25;
                     println!("searching path...");
                     self.maze_analyzer.solve(allowed_steps);
-                    // let solution = self
-                    //     .maze_analyzer
-                    //     .search(&mut self.replay_buffer, allowed_steps);
-                    // match solution {
-                    //     Ok(path) => eprintln!("Follow the path: {:?}", path),
-                    //     Err(e) => eprint!(
-                    //         "failed to find a solution within the {} steps. Error: {}",
-                    //         allowed_steps, e
-                    //     ),
-                    // }
                 }
                 user_command => {
                     return Err(format!("unsupported slash command {}", user_command).into());
@@ -446,10 +418,7 @@ impl VM {
     fn get_state(&self) -> String {
         let mut state = String::new();
         state.push_str(&format!("***         Virtual Machine State         ***\n"));
-        state.push_str(&format!(
-            "{}\n",
-            iter::repeat("=").take(44).collect::<String>()
-        ));
+        state.push_str(&format!("{}\n", "=".repeat(PRINT_WIDTH)));
         state.push_str(&format!("{:<9}: {}\n", "halt", self.halt));
         state.push_str(&format!("{:<9}: {}\n", "rom size", self.memory.len()));
         state.push_str(&self.get_registers_info(1));
@@ -457,10 +426,7 @@ impl VM {
         state.push_str(&self.get_replay(1));
         state.push_str(&self.get_commands_history(1));
         state.push_str(&format!("{:<9}: {}\n", "position", self.current_address));
-        state.push_str(&format!(
-            "{}\n",
-            iter::repeat("_").take(44).collect::<String>()
-        ));
+        state.push_str(&format!("{}\n", "_".repeat(PRINT_WIDTH)));
         state.push_str(&format!(
             "{:<9}: {}\n",
             "record out",
@@ -469,17 +435,17 @@ impl VM {
                 .map_or("N/A".to_string(), |p| p.display().to_string())
         ));
         state.push_str(&self.maze_analyzer.get_maze_analyzer_state(1));
-        state.push_str(&format!("=============================================\n"));
+        state.push_str(&format!("{}\n", "=".repeat(PRINT_WIDTH)));
         state
     }
     fn get_registers_info(&self, indent: usize) -> String {
         let mut registers = String::new();
-        let indentation = iter::repeat("  ").take(indent).collect::<String>();
+        let indentation = " ".repeat(indent);
         registers.push_str(&format!("{:<9}:\n", "registers"));
         registers.push_str(&format!(
             "{}{}\n",
             indentation,
-            iter::repeat("-").take(44 - indent).collect::<String>()
+            "-".repeat(PRINT_WIDTH - indent)
         ));
         self.registers.iter().enumerate().for_each(|(n, r)| {
             registers.push_str(&format!("{}{}{}: {:<10}\n", indentation, "reg ", n, r))
@@ -487,13 +453,13 @@ impl VM {
         registers.push_str(&format!(
             "{}{}\n",
             indentation,
-            iter::repeat("-").take(44 - indent).collect::<String>()
+            "-".repeat(PRINT_WIDTH - indent)
         ));
         registers
     }
     fn get_stack_info(&self, indent: usize) -> String {
         let mut stack = String::new();
-        let indentation = iter::repeat("  ").take(indent).collect::<String>();
+        let indentation = " ".repeat(indent);
         stack.push_str(&format!(
             "{:<9}  (size: {:3}):\n",
             "stack",
@@ -502,7 +468,7 @@ impl VM {
         stack.push_str(&format!(
             "{}{}\n",
             indentation,
-            iter::repeat("+").take(44 - indent).collect::<String>()
+            "+".repeat(PRINT_WIDTH - indent)
         ));
         self.stack
             .iter()
@@ -512,13 +478,13 @@ impl VM {
         stack.push_str(&format!(
             "{}{}\n",
             indentation,
-            iter::repeat("+").take(44 - indent).collect::<String>()
+            "+".repeat(PRINT_WIDTH - indent)
         ));
         stack
     }
     fn get_commands_history(&self, indent: usize) -> String {
         let mut commands = String::new();
-        let indentation = iter::repeat("  ").take(indent).collect::<String>();
+        let indentation = " ".repeat(indent);
         commands.push_str(&format!(
             "{:<9}  (size: {:3}):\n",
             "commands history",
@@ -527,7 +493,7 @@ impl VM {
         commands.push_str(&format!(
             "{}{}\n",
             indentation,
-            iter::repeat(".").take(44 - indent).collect::<String>()
+            ".".repeat(PRINT_WIDTH - indent)
         ));
         self.commands_history()
             .iter()
@@ -536,13 +502,13 @@ impl VM {
         commands.push_str(&format!(
             "{}{}\n",
             indentation,
-            iter::repeat(".").take(44 - indent).collect::<String>()
+            ".".repeat(PRINT_WIDTH - indent)
         ));
         commands
     }
     fn get_replay(&self, indent: usize) -> String {
         let mut commands = String::new();
-        let indentation = iter::repeat("  ").take(indent).collect::<String>();
+        let indentation = " ".repeat(indent);
         match self.replay_commands {
             Some(ref rc) => {
                 commands.push_str(&format!(
@@ -553,7 +519,7 @@ impl VM {
                 commands.push_str(&format!(
                     "{}{}\n",
                     indentation,
-                    iter::repeat(".").take(44 - indent).collect::<String>()
+                    ".".repeat(PRINT_WIDTH - indent)
                 ));
                 rc.iter().enumerate().for_each(|(n, r)| {
                     commands.push_str(&format!("{}[{}: {:<10}]\n", indentation, n, r))
@@ -561,7 +527,7 @@ impl VM {
                 commands.push_str(&format!(
                     "{}{}\n",
                     indentation,
-                    iter::repeat(".").take(44 - indent).collect::<String>()
+                    ".".repeat(PRINT_WIDTH - indent)
                 ));
             }
             None => commands.push_str(&format!("{:<9}  (size: {:3}):\n", "replay commands", "N/A")),
@@ -617,10 +583,7 @@ impl VM {
         let b = self.memory[ptr as usize];
         trace!(
             "  fetched {} [{:#x}] from memory pointer {} [{:#x}] ",
-            b,
-            b,
-            ptr,
-            ptr
+            b, b, ptr, ptr
         );
         b
     }
@@ -664,8 +627,7 @@ impl VM {
         let next_address = self.current_address.next();
         trace!(
             "{} stepping to the next address {}",
-            &self.current_address,
-            next_address
+            &self.current_address, next_address
         );
         self.set_position(next_address);
     }
@@ -673,9 +635,7 @@ impl VM {
         let new_address = self.current_address.add(n);
         trace!(
             "{} stepping {} addresses forward to {}",
-            &self.current_address,
-            n,
-            &new_address
+            &self.current_address, n, &new_address
         );
         self.set_position(new_address);
     }
@@ -698,7 +658,7 @@ impl VM {
             character as u8
         );
         print!("{}", character);
-        self.grab_output(character,true);
+        self.grab_output(character, true);
         self.step_n(2);
     }
 
@@ -780,7 +740,7 @@ impl VM {
     fn store_raw_value_to_register(&mut self, register_number: usize, value: u16) {
         assert!(register_number < 8);
         assert!(value < MAX + 8); // Here I tollerate storing register pointer values. Probably it
-                                  // is a mistake
+        // is a mistake
         trace!("storing value {} to register {}", value, register_number);
         self.registers[register_number] = value;
     }
@@ -813,86 +773,59 @@ impl VM {
         if let Data::Register(r) = reg {
             let result = match op {
                 ArithmeticOperations::Add => {
-                    (val1
-                        + self.unpack_data(
-                            v2.expect(
-                                format!(
+                    (val1 + self.unpack_data(v2.unwrap_or_else(|| {
+                        panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                                .as_str(),
-                            ),
-                        ))
-                        % MAX
+                    }))) % MAX
                 }
                 ArithmeticOperations::Multiply => {
-                    (val1 as u64
-                        * self.unpack_data(
-                            v2.expect(
-                                format!(
+                    (val1 as u64 * self.unpack_data(v2.unwrap_or_else(|| {
+                        panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                                .as_str(),
-                            ),
-                        ) as u64) as u16
+                    })) as u64) as u16
                         % MAX
                 }
                 ArithmeticOperations::And => {
-                    (val1
-                        & self.unpack_data(
-                            v2.expect(
-                                format!(
+                    (val1 & self.unpack_data(v2.unwrap_or_else(|| {
+                        panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                                .as_str(),
-                            ),
-                        ))
-                        % MAX
+                    }))) % MAX
                 }
                 ArithmeticOperations::Or => {
-                    (val1
-                        | self.unpack_data(
-                            v2.expect(
-                                format!(
+                    (val1 | self.unpack_data(v2.unwrap_or_else(|| {
+                        panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                                .as_str(),
-                            ),
-                        ))
-                        % MAX
+                    }))) % MAX
                 }
                 ArithmeticOperations::Not => {
                     trace!(
                         "   performint bitwise negation operation ~ (!) on {} ({:#b})",
-                        val1,
-                        val1
+                        val1, val1
                     );
                     let result = (!val1) % MAX;
                     trace!("   got negation result {} ({:#b})", result, result);
                     result
                 }
                 ArithmeticOperations::Modulo => {
-                    (val1
-                        % self.unpack_data(
-                            v2.expect(
-                                format!(
+                    (val1 % self.unpack_data(v2.unwrap_or_else(|| {
+                        panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                                .as_str(),
-                            ),
-                        ))
-                        % MAX
+                    }))) % MAX
                 }
             };
             trace!(
                 "   got arithmetic ops result {} {:#x} {:#b}",
-                result,
-                result,
-                result
+                result, result, result
             );
             self.store_raw_value_to_register(r, result);
         } else {
@@ -970,9 +903,7 @@ impl VM {
     fn store_equality(&mut self, reg: Data, v1: Data, v2: Data) -> bool {
         trace!(
             " storing result of eq operation of {} and {} to {}",
-            v1,
-            v2,
-            reg
+            v1, v2, reg
         );
         assert!(
             reg.is_register(),
@@ -1029,8 +960,7 @@ impl VM {
             Data::Register(r) => {
                 trace!(
                     " following mem address and setting register {} to value {}",
-                    r,
-                    val
+                    r, val
                 );
                 self.set_value_to_register(r_data, v_data);
             }
@@ -1039,10 +969,7 @@ impl VM {
                 let raw_value = self.unpack_data(v_data);
                 trace!(
                     "setting literal value {} (orig: {}) to memory address {} (Ptr: {})",
-                    raw_value,
-                    val,
-                    a,
-                    ptr
+                    raw_value, val, a, ptr
                 );
                 self.set_memory(ptr, raw_value);
             }
@@ -1051,9 +978,7 @@ impl VM {
     fn set_memory(&mut self, ptr: Ptr, val: u16) {
         trace!(
             "  setting value: {} to memory raw ptr: {}({:#x})",
-            val,
-            ptr,
-            ptr
+            val, ptr, ptr
         );
         assert!(
             validate_value(val),
@@ -1092,9 +1017,7 @@ impl VM {
     fn store_greater_than(&mut self, reg: Data, v1: Data, v2: Data) -> bool {
         trace!(
             " storing result of gt operation of {} and {} to {}",
-            v1,
-            v2,
-            reg
+            v1, v2, reg
         );
         assert!(
             reg.is_register(),
@@ -1166,16 +1089,19 @@ impl VM {
         );
         let command = self.current_command_buf.clone();
         self.current_command_buf.clear();
-        let do_save: bool = match  self.process_command(&command) {
+        let do_save: bool = match self.process_command(&command) {
             Ok(s) => s,
-            Err(process_error) =>  { warn!("processing command returned an error: {}", process_error); true },
-        };
-            if let Err(maze_error) = self.maze_analyzer.add_response(&command) {
-                error!(
-                    "failed to add response to the maze analyzer Error: {}",
-                    maze_error
-                );
+            Err(process_error) => {
+                warn!("processing command returned an error: {}", process_error);
+                true
             }
+        };
+        if let Err(maze_error) = self.maze_analyzer.add_response(&command) {
+            error!(
+                "failed to add response to the maze analyzer Error: {}",
+                maze_error
+            );
+        }
         //checking for Maze Analyzer
         // Before all check if the program is in the process of solving
         if self.maze_analyzer.is_rambling() {
@@ -1190,19 +1116,19 @@ impl VM {
         trace!("after accepting the user command we flush maze analyzer too");
     }
     // returns false if no advance is needed
-    fn grab_input(&mut self, c: char) -> bool{
+    fn grab_input(&mut self, c: char) -> bool {
         match c {
             '\n' => {
-               // Only next 'enter' should be processed
-                let mut  do_jump = true; // By default we jump
+                // Only next 'enter' should be processed
+                let mut do_jump = true; // By default we jump
                 if self.spin_slash_command {
-                trace!("disabling slash spin");
-                self.spin_slash_command = false;
-                    do_jump = false;  // but for this last time we skip newline symbol, to not provoke error message.
-            }
+                    trace!("disabling slash spin");
+                    self.spin_slash_command = false;
+                    do_jump = false; // but for this last time we skip newline symbol, to not provoke error message.
+                }
                 self.store_command_to_history();
                 do_jump
-            },
+            }
             '/' => {
                 if self.current_command_buf.is_empty() {
                     debug!("detected a slash command. Enabling spin");
@@ -1211,7 +1137,10 @@ impl VM {
                 self.current_command_buf.push(c);
                 !self.spin_slash_command
             }
-            c if char_is_printable(c) => { self.current_command_buf.push(c); !self.spin_slash_command},
+            c if char_is_printable(c) => {
+                self.current_command_buf.push(c);
+                !self.spin_slash_command
+            }
             _ => {
                 warn!("trying to store unprintable character! This should never happen!");
                 false
@@ -1262,6 +1191,26 @@ impl VM {
             self.maze_analyzer.push(c);
         }
     }
+    fn solver_hook(&mut self) -> bool {
+        if !self.maze_analyzer.is_rambling() || self.maze_analyzer.expect_output() {
+            return false;
+        }
+        //jump this cycle to re-analyze output
+        trace!("need to re-read input");
+        match self
+            .maze_analyzer
+            .add_response(self.commands_history.last().unwrap())
+        {
+            Ok(_) => {
+                self.maze_analyzer.ramble(&mut self.replay_buffer);
+                true
+            }
+            Err(solve_err) => {
+                warn!("maze  solver failed with error: {}", solve_err);
+                false
+            }
+        }
+    }
     /// This function is an implementation of the 'in' operational instruction
     fn read_in(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "in".magenta(), &a);
@@ -1272,14 +1221,12 @@ impl VM {
                 replay_char as u8
             }
             None => {
-                if self.maze_analyzer.is_rambling() && !self.maze_analyzer.expect_output() {
-                    //jump this cycle to re-analyze output
-                    trace!("need to re-read input");
-                    self.maze_analyzer.add_response(&self.commands_history.last().unwrap());
-                    self.maze_analyzer.ramble(&mut self.replay_buffer);
-                    return
+                // exit earlier without reading the user input, if the autosolver is working
+                if self.solver_hook() {
+                    return;
                 }
                 let mut buf: [u8; 1] = [0];
+
                 match io::stdin().read_exact(&mut buf) {
                     Ok(()) => buf[0],
                     Err(e) => {
@@ -1289,7 +1236,7 @@ impl VM {
                 }
             }
         };
-        if!  self.grab_input(c as char) {
+        if !self.grab_input(c as char) {
             // Skip the advance when processing slash commands, or something wrong happen.
             return;
         }
@@ -1573,7 +1520,7 @@ impl VM {
 }
 
 pub fn run(config: config::Configuration) -> Result<(), Box<dyn Error>> {
-    debug!("{}", format!("received configuration {}", &config));
+    debug!("received configuration {}", &config);
     if !config.is_valid() {
         return Err("configuration is invalid".into());
     }

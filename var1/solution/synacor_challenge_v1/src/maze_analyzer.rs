@@ -3,8 +3,8 @@ use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 
-use std::rc::{Rc, Weak};
 use log::debug;
+use std::rc::{Rc, Weak};
 
 #[derive(Debug)]
 pub struct MazeAnalyzer {
@@ -97,7 +97,7 @@ impl MazeAnalyzer {
             steps_left: 0,
             solution_commands: None,
             commands_counter: 0,
-            last_command_num:0,
+            last_command_num: 0,
         }
     }
 
@@ -105,9 +105,9 @@ impl MazeAnalyzer {
         self.steps_left > 0
     }
     pub fn expect_output(&mut self) -> bool {
-         self.commands_counter != self.last_command_num
+        self.commands_counter != self.last_command_num
     }
-    pub fn solution(&self)  -> Option<Vec<String>> {
+    pub fn solution(&self) -> Option<Vec<String>> {
         self.solution_commands.clone()
     }
 
@@ -234,26 +234,23 @@ impl MazeAnalyzer {
 
     /// This function should traverse the maze and find the best route to the exit
     /// Return value shouwl be a vector of the commands to pass the maze
-    pub fn search(
-        &mut self,
-        replay_buf: &mut VecDeque<char>,
-    ) -> Result<Vec<String>, String> {
+    pub fn search(&mut self, replay_buf: &mut VecDeque<char>) -> Result<Vec<String>, String> {
         let commands = self.get_possible_commands();
         if self.head.is_none() {
-            return Err("maze analyzer does not have a head node".into())
+            return Err("maze analyzer does not have a head node".into());
         }
-            let node = self.head.clone().unwrap();
-            let node_steps = node.steps;
-            if node_steps > self.steps_left {
-
-                return Err("exhausted steps".into());
-            }
-            let steps = self.output_messages[&node];
-        let should_push_commands : bool = steps.is_none() || node_steps < steps.unwrap_or(u16::MAX);
-        if should_push_commands{
-                self.output_messages.insert(node, Some(node_steps));
+        let node = self.head.clone().unwrap();
+        let node_steps = node.steps;
+        if node_steps > self.steps_left {
+            return Err("exhausted steps".into());
+        }
+        let steps = self.output_messages[&node];
+        let should_push_commands: bool = steps.is_none() || node_steps < steps.unwrap_or(u16::MAX);
+        if should_push_commands {
+            self.output_messages.insert(node, Some(node_steps));
             commands
-                .into_iter().rev()
+                .into_iter()
+                .rev()
                 .for_each(|cmd| self.commands_queue.push_front(cmd));
             // We pop exactly 1 command, because new node will give other commands
             if let Some(cmd) = self.commands_queue.pop_front() {
@@ -261,19 +258,19 @@ impl MazeAnalyzer {
                 replay_buf.push_back('\n');
                 self.last_command_num = self.commands_counter;
             }
-            }
+        }
 
         Ok(vec![])
     }
 
     pub fn solve(&mut self, steps_limit: u16) {
-        debug!("started automatic path finding with limit of {}", steps_limit);
-       self.steps_left += steps_limit;
+        debug!(
+            "started automatic path finding with limit of {}",
+            steps_limit
+        );
+        self.steps_left += steps_limit;
     }
-    pub fn ramble(
-        &mut self,
-        replay_buf: &mut VecDeque<char>,
-    )  {
+    pub fn ramble(&mut self, replay_buf: &mut VecDeque<char>) {
         if self.expect_output() {
             match self.search(replay_buf) {
                 Ok(_) => eprintln!("search finished successfully"),
