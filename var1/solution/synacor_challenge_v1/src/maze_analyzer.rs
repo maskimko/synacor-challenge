@@ -8,7 +8,7 @@ use std::rc::{Rc, Weak};
 
 #[derive(Debug)]
 pub struct MazeAnalyzer {
-    output_messages: HashMap<Rc<Node>, Option<u16>>,
+    nodes: HashMap<Rc<Node>, Option<u16>>,
     response_buffer: String,
     first: Option<Rc<Node>>,
     head: Option<Rc<Node>>,
@@ -89,7 +89,7 @@ impl fmt::Display for Node {
 impl MazeAnalyzer {
     pub fn new() -> Self {
         MazeAnalyzer {
-            output_messages: HashMap::new(),
+            nodes: HashMap::new(),
             response_buffer: String::new(),
             first: None,
             head: None,
@@ -128,12 +128,12 @@ impl MazeAnalyzer {
                     steps,
                     command,
                 ));
-                self.output_messages.insert(head.clone(), None);
+                self.nodes.insert(head.clone(), None);
                 self.head = Some(head);
             }
             None => {
                 let first = Rc::new(Node::new(resp_parts, command));
-                self.output_messages.insert(first.clone(), None);
+                self.nodes.insert(first.clone(), None);
                 self.first = Some(first.clone());
                 self.head = Some(first)
             }
@@ -244,10 +244,10 @@ impl MazeAnalyzer {
         if node_steps > self.steps_left {
             return Err("exhausted steps".into());
         }
-        let steps = self.output_messages[&node];
+        let steps = self.nodes[&node];
         let should_push_commands: bool = steps.is_none() || node_steps < steps.unwrap_or(u16::MAX);
         if should_push_commands {
-            self.output_messages.insert(node, Some(node_steps));
+            self.nodes.insert(node, Some(node_steps));
             commands
                 .into_iter()
                 .rev()

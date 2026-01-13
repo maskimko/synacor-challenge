@@ -1,11 +1,10 @@
 use colored::Colorize;
-use log::{Level, debug, error, info, trace};
+use log::{debug, error, info, trace, Level};
 use log::{log_enabled, warn};
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Write};
-use std::iter;
 use std::path::PathBuf;
 use std::{fmt, fs};
 
@@ -162,7 +161,11 @@ fn compose_value(byte_pair: (u8, u8)) -> u16 {
     let value = hb + lb;
     trace!(
         "  compose value {} ({:#x}) from bytes {:?} ({:#x}, {:#x})",
-        value, value, byte_pair, byte_pair.0, byte_pair.1
+        value,
+        value,
+        byte_pair,
+        byte_pair.0,
+        byte_pair.1
     );
     // If the value is greater than 32768 + 8 (MAX + number of registers), it will cause panic
     // anyway, so it makes sense to log it early
@@ -199,7 +202,11 @@ fn decompose_value(value: u16) -> (u8, u8) {
     let byte_pair: (u8, u8) = (lb as u8, hb as u8);
     trace!(
         "  decompose bytes {:?} ({:#x}, {:#x}) from value {} ({:#x}) ",
-        byte_pair, byte_pair.0, byte_pair.1, value, value
+        byte_pair,
+        byte_pair.0,
+        byte_pair.1,
+        value,
+        value
     );
     byte_pair
 }
@@ -417,7 +424,7 @@ impl VM {
     }
     fn get_state(&self) -> String {
         let mut state = String::new();
-        state.push_str(&format!("***         Virtual Machine State         ***\n"));
+        state.push_str("***         Virtual Machine State         ***\n");
         state.push_str(&format!("{}\n", "=".repeat(PRINT_WIDTH)));
         state.push_str(&format!("{:<9}: {}\n", "halt", self.halt));
         state.push_str(&format!("{:<9}: {}\n", "rom size", self.memory.len()));
@@ -583,7 +590,10 @@ impl VM {
         let b = self.memory[ptr as usize];
         trace!(
             "  fetched {} [{:#x}] from memory pointer {} [{:#x}] ",
-            b, b, ptr, ptr
+            b,
+            b,
+            ptr,
+            ptr
         );
         b
     }
@@ -627,7 +637,8 @@ impl VM {
         let next_address = self.current_address.next();
         trace!(
             "{} stepping to the next address {}",
-            &self.current_address, next_address
+            &self.current_address,
+            next_address
         );
         self.set_position(next_address);
     }
@@ -635,7 +646,9 @@ impl VM {
         let new_address = self.current_address.add(n);
         trace!(
             "{} stepping {} addresses forward to {}",
-            &self.current_address, n, &new_address
+            &self.current_address,
+            n,
+            &new_address
         );
         self.set_position(new_address);
     }
@@ -740,7 +753,7 @@ impl VM {
     fn store_raw_value_to_register(&mut self, register_number: usize, value: u16) {
         assert!(register_number < 8);
         assert!(value < MAX + 8); // Here I tollerate storing register pointer values. Probably it
-        // is a mistake
+                                  // is a mistake
         trace!("storing value {} to register {}", value, register_number);
         self.registers[register_number] = value;
     }
@@ -773,59 +786,71 @@ impl VM {
         if let Data::Register(r) = reg {
             let result = match op {
                 ArithmeticOperations::Add => {
-                    (val1 + self.unpack_data(v2.unwrap_or_else(|| {
-                        panic!(
+                    (val1
+                        + self.unpack_data(v2.unwrap_or_else(|| {
+                            panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                    }))) % MAX
+                        })))
+                        % MAX
                 }
                 ArithmeticOperations::Multiply => {
-                    (val1 as u64 * self.unpack_data(v2.unwrap_or_else(|| {
-                        panic!(
+                    (val1 as u64
+                        * self.unpack_data(v2.unwrap_or_else(|| {
+                            panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                    })) as u64) as u16
+                        })) as u64) as u16
                         % MAX
                 }
                 ArithmeticOperations::And => {
-                    (val1 & self.unpack_data(v2.unwrap_or_else(|| {
-                        panic!(
+                    (val1
+                        & self.unpack_data(v2.unwrap_or_else(|| {
+                            panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                    }))) % MAX
+                        })))
+                        % MAX
                 }
                 ArithmeticOperations::Or => {
-                    (val1 | self.unpack_data(v2.unwrap_or_else(|| {
-                        panic!(
+                    (val1
+                        | self.unpack_data(v2.unwrap_or_else(|| {
+                            panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                    }))) % MAX
+                        })))
+                        % MAX
                 }
                 ArithmeticOperations::Not => {
                     trace!(
                         "   performint bitwise negation operation ~ (!) on {} ({:#b})",
-                        val1, val1
+                        val1,
+                        val1
                     );
                     let result = (!val1) % MAX;
                     trace!("   got negation result {} ({:#b})", result, result);
                     result
                 }
                 ArithmeticOperations::Modulo => {
-                    (val1 % self.unpack_data(v2.unwrap_or_else(|| {
-                        panic!(
+                    (val1
+                        % self.unpack_data(v2.unwrap_or_else(|| {
+                            panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                    }))) % MAX
+                        })))
+                        % MAX
                 }
             };
             trace!(
                 "   got arithmetic ops result {} {:#x} {:#b}",
-                result, result, result
+                result,
+                result,
+                result
             );
             self.store_raw_value_to_register(r, result);
         } else {
@@ -903,7 +928,9 @@ impl VM {
     fn store_equality(&mut self, reg: Data, v1: Data, v2: Data) -> bool {
         trace!(
             " storing result of eq operation of {} and {} to {}",
-            v1, v2, reg
+            v1,
+            v2,
+            reg
         );
         assert!(
             reg.is_register(),
@@ -960,7 +987,8 @@ impl VM {
             Data::Register(r) => {
                 trace!(
                     " following mem address and setting register {} to value {}",
-                    r, val
+                    r,
+                    val
                 );
                 self.set_value_to_register(r_data, v_data);
             }
@@ -969,7 +997,10 @@ impl VM {
                 let raw_value = self.unpack_data(v_data);
                 trace!(
                     "setting literal value {} (orig: {}) to memory address {} (Ptr: {})",
-                    raw_value, val, a, ptr
+                    raw_value,
+                    val,
+                    a,
+                    ptr
                 );
                 self.set_memory(ptr, raw_value);
             }
@@ -978,7 +1009,9 @@ impl VM {
     fn set_memory(&mut self, ptr: Ptr, val: u16) {
         trace!(
             "  setting value: {} to memory raw ptr: {}({:#x})",
-            val, ptr, ptr
+            val,
+            ptr,
+            ptr
         );
         assert!(
             validate_value(val),
@@ -1017,7 +1050,9 @@ impl VM {
     fn store_greater_than(&mut self, reg: Data, v1: Data, v2: Data) -> bool {
         trace!(
             " storing result of gt operation of {} and {} to {}",
-            v1, v2, reg
+            v1,
+            v2,
+            reg
         );
         assert!(
             reg.is_register(),
