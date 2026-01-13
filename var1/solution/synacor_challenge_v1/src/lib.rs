@@ -37,6 +37,7 @@ struct VM {
     current_command_buf: String, //used to store user input until the newline character
     output_writer: Option<BufWriter<File>>,
     maze_analyzer: MazeAnalyzer,
+    spin_slash_command: bool,
 }
 
 /*
@@ -156,6 +157,7 @@ fn print_slash_command_help() {
     eprintln!("/show_history - show commands history");
     eprintln!("/save_history - save commands history to file");
     eprintln!("/record_output - start output recording");
+    eprintln!("/solve - start automatic path search");
 }
 
 /// This function composes u16 number from little endian byte pair of low byte and high byte
@@ -330,9 +332,12 @@ impl<'b> aux::Commander<'b> for VM {
         trace!("saving commands history to file {}", dst);
         fs::write(dst, self.commands_history().join("\n"))
     }
-    fn process_command(&mut self, command: &str) -> Result<(), Box<dyn Error>> {
+    /// This function processes the slash commands and return true if the command should be saved to history
+    fn process_command(&mut self, command: &str) -> Result<bool, Box<dyn Error>> {
         debug!("processing command {}", self.current_command_buf.as_str());
+        let mut to_save = true;
         if command.starts_with("/") {
+            to_save = false;
             trace!("processing slash '/' command");
             match command.to_lowercase().as_str() {
                 "/help" => print_slash_command_help(),
@@ -391,14 +396,32 @@ impl<'b> aux::Commander<'b> for VM {
                         }
                     }
                 }
+                "/solve" => {
+                    let allowed_steps = 25;
+                    println!("searching path...");
+                    self.maze_analyzer.solve(allowed_steps);
+                    // let solution = self
+                    //     .maze_analyzer
+                    //     .search(&mut self.replay_buffer, allowed_steps);
+                    // match solution {
+                    //     Ok(path) => eprintln!("Follow the path: {:?}", path),
+                    //     Err(e) => eprint!(
+                    //         "failed to find a solution within the {} steps. Error: {}",
+                    //         allowed_steps, e
+                    //     ),
+                    // }
+                }
                 user_command => {
                     return Err(format!("unsupported slash command {}", user_command).into());
                 }
             }
         }
         // Save command input to the output recording
-        command.chars().for_each(|c| self.grab_output(c));
-        Ok(())
+        if to_save {
+            // Do not pass the input command back to the maze analyzer
+            command.chars().for_each(|c| self.grab_output(c, false));
+        }
+        Ok(to_save)
     }
 }
 
@@ -417,6 +440,7 @@ impl VM {
             replay_buffer: VecDeque::new(),
             output_writer: None,
             maze_analyzer: MazeAnalyzer::new(),
+            spin_slash_command: false,
         }
     }
     fn get_state(&self) -> String {
@@ -674,7 +698,7 @@ impl VM {
             character as u8
         );
         print!("{}", character);
-        self.grab_output(character);
+        self.grab_output(character,true);
         self.step_n(2);
     }
 
@@ -1134,6 +1158,7 @@ impl VM {
         self.set_memory_by_address(Address::new(val_addr), val);
         self.step_n(3);
     }
+    // returns false if command is not stored
     fn store_command_to_history(&mut self) {
         debug!(
             "storing command {} to command history",
@@ -1141,25 +1166,55 @@ impl VM {
         );
         let command = self.current_command_buf.clone();
         self.current_command_buf.clear();
-        if let Err(process_error) = self.process_command(&command) {
-            warn!("processing command returned an error: {}", process_error);
+        let do_save: bool = match  self.process_command(&command) {
+            Ok(s) => s,
+            Err(process_error) =>  { warn!("processing command returned an error: {}", process_error); true },
+        };
+            if let Err(maze_error) = self.maze_analyzer.add_response(&command) {
+                error!(
+                    "failed to add response to the maze analyzer Error: {}",
+                    maze_error
+                );
+            }
+        //checking for Maze Analyzer
+        // Before all check if the program is in the process of solving
+        if self.maze_analyzer.is_rambling() {
+            // This will populate the replay buffer
+            self.maze_analyzer.ramble(&mut self.replay_buffer);
         }
-        if let Err(maze_error) = self.maze_analyzer.add_response(&command) {
-            error!(
-                "failed to add response to the maze analyzer Error: {}",
-                maze_error
-            );
+
+        if do_save {
+            self.commands_history.push(command);
         }
-        self.commands_history.push(command);
         debug!("history size now is {}", self.commands_history.len());
         trace!("after accepting the user command we flush maze analyzer too");
     }
-    fn grab_input(&mut self, c: char) {
+    // returns false if no advance is needed
+    fn grab_input(&mut self, c: char) -> bool{
         match c {
-            '\n' => self.store_command_to_history(),
-            c if char_is_printable(c) => self.current_command_buf.push(c),
+            '\n' => {
+               // Only next 'enter' should be processed
+                let mut  do_jump = true; // By default we jump
+                if self.spin_slash_command {
+                trace!("disabling slash spin");
+                self.spin_slash_command = false;
+                    do_jump = false;  // but for this last time we skip newline symbol, to not provoke error message.
+            }
+                self.store_command_to_history();
+                do_jump
+            },
+            '/' => {
+                if self.current_command_buf.is_empty() {
+                    debug!("detected a slash command. Enabling spin");
+                    self.spin_slash_command = true;
+                }
+                self.current_command_buf.push(c);
+                !self.spin_slash_command
+            }
+            c if char_is_printable(c) => { self.current_command_buf.push(c); !self.spin_slash_command},
             _ => {
                 warn!("trying to store unprintable character! This should never happen!");
+                false
             }
         }
     }
@@ -1167,7 +1222,7 @@ impl VM {
         trace!("set 'record_output' to None, and thus disabled the output recording");
         self.record_output = None;
     }
-    fn grab_output(&mut self, c: char) {
+    fn grab_output(&mut self, c: char, analyze: bool) {
         if self.is_recording_active() {
             // Init BufWriter if needed
             if self.output_writer.is_none() {
@@ -1185,7 +1240,7 @@ impl VM {
                     }
                 };
             }
-            // Peroform write
+            // Perform write
             if let Some(ref mut bw) = self.output_writer {
                 match bw.write(&[c as u8]) {
                     Ok(count) => trace!("wrote {} bytes to the outout buffer", count),
@@ -1203,7 +1258,9 @@ impl VM {
                 }
             }
         }
-        self.maze_analyzer.push(c);
+        if analyze {
+            self.maze_analyzer.push(c);
+        }
     }
     /// This function is an implementation of the 'in' operational instruction
     fn read_in(&mut self, a: Address) {
@@ -1215,6 +1272,13 @@ impl VM {
                 replay_char as u8
             }
             None => {
+                if self.maze_analyzer.is_rambling() && !self.maze_analyzer.expect_output() {
+                    //jump this cycle to re-analyze output
+                    trace!("need to re-read input");
+                    self.maze_analyzer.add_response(&self.commands_history.last().unwrap());
+                    self.maze_analyzer.ramble(&mut self.replay_buffer);
+                    return
+                }
                 let mut buf: [u8; 1] = [0];
                 match io::stdin().read_exact(&mut buf) {
                     Ok(()) => buf[0],
@@ -1225,10 +1289,13 @@ impl VM {
                 }
             }
         };
+        if!  self.grab_input(c as char) {
+            // Skip the advance when processing slash commands, or something wrong happen.
+            return;
+        }
         let reg = pack_raw_value(self.get_value_from_addr(&a));
         let val = pack_raw_value(c.into());
         self.set_value_to_register(reg, val);
-        self.grab_input(c as char);
         self.step_n(2);
     }
     fn main_loop(&mut self) -> Result<u64, Box<dyn Error>> {
