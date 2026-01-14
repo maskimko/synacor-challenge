@@ -386,7 +386,7 @@ impl<'b> aux::Commander<'b> for VM {
                     }
                 }
                 "/solve" => {
-                    let allowed_steps = 25;
+                    let allowed_steps = 50;
                     println!("searching path...");
                     self.maze_analyzer.solve(allowed_steps);
                 }
@@ -1137,6 +1137,8 @@ impl VM {
                 maze_error
             );
         }
+        // Disabling thig brake things, using solver_hook is not enough
+        // TODO: improve this logic later
         //checking for Maze Analyzer
         // Before all check if the program is in the process of solving
         if self.maze_analyzer.is_rambling() {
@@ -1257,6 +1259,8 @@ impl VM {
             }
             None => {
                 // exit earlier without reading the user input, if the autosolver is working
+                // It is needed here, before processing user input.
+                // Other invocation is in grab_input/store_command_to_history
                 if self.solver_hook() {
                     return;
                 }
