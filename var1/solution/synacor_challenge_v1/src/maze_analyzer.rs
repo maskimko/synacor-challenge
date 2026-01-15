@@ -37,7 +37,9 @@ struct NodeMetadata {
     visited_edges: HashSet<String>,
     last_visited_edge: Option<String>,
     edge_response: HashMap<Rc<ResponseParts>, String>,
+    id: u16,
 }
+
 #[derive(Derivative)]
 #[derivative(Debug, PartialEq, Eq, Hash)]
 struct Node {
@@ -110,6 +112,42 @@ impl fmt::Display for Node {
     }
 }
 
+#[derive(Debug,Clone)]
+pub enum CommandType {
+    Look,
+    Help,
+    Inventory(String),
+    Move(String),
+    Slash(String),
+}
+impl CommandType {
+    pub fn command_type(cmd: &str) -> CommandType{
+        match cmd {
+            "look" => CommandType::Look,
+            "help" => CommandType::Help,
+            c if   c.starts_with("take") ||c.starts_with("look ") || c.starts_with("use") || c.starts_with("drop")=> CommandType::Inventory(c.to_string()),
+            c if c.starts_with("/") => CommandType::Slash(c.to_string()),
+            c => CommandType::Move(c.to_string()),
+        }
+    }
+}
+
+impl From<CommandType> for String {
+    fn from(cmd: CommandType) -> String {
+        format!("{}", cmd)
+    }
+}
+impl fmt::Display for CommandType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CommandType::Look => write!(f, "look"),
+           CommandType::Help => write!(f, "help"),
+            CommandType::Inventory(c) => write!(f, "{}", c),
+            CommandType::Move(c) => write!(f, "{}", c),
+           CommandType::Slash(c) => write!(f, "{}", c),
+        }
+    }
+}
 impl MazeAnalyzer {
     pub fn new() -> Self {
         MazeAnalyzer {
@@ -137,7 +175,7 @@ impl MazeAnalyzer {
     }
 
     /// This function adds response from the inner resonse buffer
-    pub fn add_response(&mut self, command: &str) -> Result<(), Box<dyn Error>> {
+    pub fn add_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
         if self.response_buffer.is_empty() {
             return Ok(());
         }
@@ -145,8 +183,13 @@ impl MazeAnalyzer {
         let resp_parts = oan.parse()?;
         match self.head.clone() {
             Some(head) => {
-                self.visit_edge(head.clone(), command);
-                // head.borrow_mut().visit_edge(command);
+
+
+
+               // TODO: Improve with match statement
+
+                self.visit_edge(head.clone(), command.unwrap().to_string().as_str());
+                // with look, help, and inv commands (take, use, drop, look) let's not create a new node
                 let new_node = Node::new_with_prev(resp_parts, Some(head.clone()));
                 let steps = new_node.steps;
                 // Let's not insert node here, and keep this data structure for tracking visited nodes during the search
@@ -175,31 +218,6 @@ impl MazeAnalyzer {
     fn flush(&mut self) {
         self.response_buffer.clear();
     }
-    //pub fn get_maze_analyzer_state(&self, indent: usize) -> String {
-    //    let mut registers = String::new();
-    //    let indentation = iter::repeat("  ").take(indent).collect::<String>();
-    //    registers.push_str(&format!("{:<9}:\n", "Maze Analyzer"));
-    //    registers.push_str(&format!(
-    //        "{}{}\n",
-    //        indentation,
-    //        iter::repeat("#").take(44 - indent).collect::<String>()
-    //    ));
-    //    self.output_messages.iter().enumerate().for_each(|(n, r)| {
-    //        registers.push_str(&format!("{}{:4}", indentation, n));
-    //        registers.push_str(&format!(
-    //            "{}{}\n",
-    //            indentation,
-    //            iter::repeat(".").take(40 - indent).collect::<String>()
-    //        ));
-    //        registers.push_str(&format!("{}{:?}\n", indentation, r));
-    //    });
-    //    registers.push_str(&format!(
-    //        "{}{}\n",
-    //        indentation,
-    //        iter::repeat("#").take(44 - indent).collect::<String>()
-    //    ));
-    //    registers
-    //}
     pub fn get_maze_analyzer_state(&self, indent: usize) -> String {
         let mut maze = String::new();
         let indentation = " ".repeat(indent);
@@ -214,19 +232,25 @@ impl MazeAnalyzer {
         maze
     }
 
-    fn get_inventory_from_response(r: &ResponseParts) -> Vec<String> {
-        let actions = ["look", "use", "take", "drop"];
-        r.inventory
+    fn get_things_of_interest_from_response(r: &ResponseParts) -> Vec<String> {
+        let actions = ["look", "take"];
+        let things_commands =  r.things_of_interest
             .iter()
             .flat_map(|i| actions.iter().map(move |a| format!("{} {}", a, i)))
-            .collect()
-        //let mut commands = vec![];
-        //for action in ["look", "use","take", "drop"].into_iter() {
-        //   for inv_item in r.inventory.iter() {
-        //        commands.push(format!("{} {}", action, inv_item));
-        //    }
-        //}
-        //commands
+            .collect();
+       things_commands
+    }
+    fn get_inventory_from_response(r: &ResponseParts) -> Vec<String> {
+        let actions = [
+            "use",
+            // "drop",  // let's not drop things
+            // "take",
+            "look"];
+       let inv_commands =  r.inventory
+            .iter()
+            .flat_map(|i| actions.iter().map(move |a| format!("{} {}", a, i)))
+            .collect();
+       inv_commands
     }
     fn get_exits_from_response(r: &ResponseParts) -> Vec<String> {
         r.exits.iter().map(|ex| format!("go {}", ex)).collect()
@@ -236,10 +260,12 @@ impl MazeAnalyzer {
         [
             // Lets try without look and help
             // &["look".to_string(), String::from("help")],
+            Self::get_things_of_interest_from_response(r).as_slice(),
             Self::get_inventory_from_response(r).as_slice(),
             Self::get_exits_from_response(r).as_slice(),
         ]
-        .concat()
+            // Revers it so .pop() will take the first value
+        .concat().iter().rev().cloned().collect()
     }
 
     /// Validate how many steps left
@@ -360,6 +386,7 @@ impl MazeAnalyzer {
                     visited_edges: n_meta.visited_edges.clone(),
                     last_visited_edge: n_meta.last_visited_edge.clone(),
                     edge_response: n_meta.edge_response.clone(),
+                    id: n_meta.id,
                 },
             );
         } else {
@@ -373,19 +400,19 @@ impl MazeAnalyzer {
                     visited_edges: HashSet::new(),
                     last_visited_edge: None,
                     edge_response: HashMap::new(),
+                    id: self.get_node_meta_id(),
                 },
             );
         }
         // link previous
         self.link_previous(node);
     }
+
+    fn get_node_meta_id(&self ) -> u16 {
+       self.nodes.len() as u16 +1
+    }
     fn get_next_edge(&mut self, node: Rc<RefCell<Node>>) -> Option<String> {
-        loop {
-            let edge = self
-                .nodes
-                .get_mut(&node.borrow().response())?
-                .edges_to_visit
-                .pop()?;
+        while let Some(edge) = self .nodes .get_mut(&node.borrow().response())? .edges_to_visit .pop(){
             if !self
                 .nodes
                 .get(&node.borrow().response())?
@@ -395,6 +422,7 @@ impl MazeAnalyzer {
                 return Some(edge);
             }
         }
+        trace!("all edges have been consumed");
         None
     }
     fn visit_edge(&mut self, node: Rc<RefCell<Node>>, command: &str) {
@@ -409,7 +437,7 @@ impl MazeAnalyzer {
     }
 
     /// This function should traverse the maze and find the best route to the exit
-    /// Return value shouwl be a vector of the commands to pass the maze
+    /// Return value should be a vector of the commands to pass the maze
     pub fn search(&mut self, replay_buf: &mut VecDeque<char>) -> Result<Vec<String>, String> {
         if self.head.is_none() {
             return Err("maze analyzer must have a head node".into());
@@ -433,7 +461,9 @@ impl MazeAnalyzer {
             "started automatic path finding with limit of {}",
             steps_limit
         );
+        // This enables rambling / serching path
         self.steps_left += steps_limit;
+      //  self.commands_counter += 1; //To expect output
     }
     pub fn ramble(&mut self, replay_buf: &mut VecDeque<char>) {
         if self.expect_output() {

@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::path::Path;
+use crate::maze_analyzer::CommandType;
 
 pub trait Commander<'b> {
     fn get_replay_commands(&self) -> Vec<String>;
@@ -10,5 +11,5 @@ pub trait Commander<'b> {
     fn dump_state(&self, p: &Path) -> Result<(), std::io::Error>;
     fn record_output(&mut self, p: &Path) -> Result<(), Box<dyn Error>>;
     fn is_recording_active(&self) -> bool;
-    fn process_command(&mut self, command: &str) -> Result<bool, Box<dyn Error>>;
+    fn process_slash_command(&mut self, command: CommandType) -> Result<(), Box<dyn Error>>;
 }

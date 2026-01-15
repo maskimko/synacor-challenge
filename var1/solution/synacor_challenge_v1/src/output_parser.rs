@@ -1,6 +1,8 @@
 use log::{debug, error, trace};
 use regex::Regex;
 use std::{error::Error, fmt::Display};
+use std::collections::HashMap;
+
 pub struct OutputParser<'a> {
     response: &'a str,
 }
@@ -14,6 +16,8 @@ pub struct ResponseParts {
     pub things_of_interest: Vec<String>,
     pub exits: Vec<String>,
     pub dont_understand: bool,
+    pub look: Option<String>,
+    pub help: Option<String>,
 }
 
 fn is_slash_help_title(line: &str) -> bool {
@@ -289,6 +293,8 @@ impl<'a> OutputParser<'a> {
             inventory,
             things_of_interest: things,
             title: message_title,
+            help: None,
+            look: None,
         })
     }
 }

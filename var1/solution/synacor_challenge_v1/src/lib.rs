@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::{fmt, fs};
 
 use crate::aux::Commander;
-use crate::maze_analyzer::MazeAnalyzer;
+use crate::maze_analyzer::{MazeAnalyzer, CommandType};
 
 mod aux;
 pub mod config;
@@ -314,85 +314,85 @@ impl<'b> aux::Commander<'b> for VM {
         fs::write(dst, self.commands_history().join("\n"))
     }
     /// This function processes the slash commands and return true if the command should be saved to history
-    fn process_command(&mut self, command: &str) -> Result<bool, Box<dyn Error>> {
-        debug!("processing command {}", self.current_command_buf.as_str());
-        let mut to_save = true;
-        if command.starts_with("/") {
-            to_save = false;
-            trace!("processing slash '/' command");
-            match command.to_lowercase().as_str() {
-                "/help" => print_slash_command_help(),
-                "/show_state" => self.show_state(),
-                "/show_history" => {
-                    trace!("showing history of commands by demand");
-                    eprintln!("{}", self.get_commands_history(0));
-                }
-                "/save_history" => {
-                    trace!("saving history of commands by demand");
-                    // TODO: Provide an argument to this command
-                    const HISTORY_FILE: &str = "history.txt";
-                    match self.save_commands_history(HISTORY_FILE) {
-                        Ok(_) => eprintln!(
-                            "successfully saved commands history to file {}",
-                            HISTORY_FILE
-                        ),
-                        Err(sh_err) => error!(
+    fn process_slash_command(&mut self, cmd: CommandType) -> Result<(), Box<dyn Error>> {
+        if let CommandType::Slash(command) = cmd {
+            debug!("processing command {}", self.current_command_buf.as_str());
+            if command.starts_with("/") {
+                trace!("processing slash '/' command");
+                match command.to_lowercase().as_str() {
+                    "/help" => print_slash_command_help(),
+                    "/show_state" => self.show_state(),
+                    "/show_history" => {
+                        trace!("showing history of commands by demand");
+                        eprintln!("{}", self.get_commands_history(0));
+                    }
+                    "/save_history" => {
+                        trace!("saving history of commands by demand");
+                        // TODO: Provide an argument to this command
+                        const HISTORY_FILE: &str = "history.txt";
+                        match self.save_commands_history(HISTORY_FILE) {
+                            Ok(_) => eprintln!(
+                                "successfully saved commands history to file {}",
+                                HISTORY_FILE
+                            ),
+                            Err(sh_err) => error!(
                             "failed to save commands history to file {} Error: {}",
                             HISTORY_FILE, sh_err
                         ),
-                    };
-                }
-                "/show_replay" => {
-                    trace!("showing replay commands history");
-                    eprintln!("{}", self.get_replay(0));
-                }
-                "/record_output" => {
-                    // TODO: Provide an argument to this command
-                    trace!("enabling output record by demand");
-                    const OUTPUT_FILE: &str = "output.txt";
-                    match self.record_output(Into::<PathBuf>::into(OUTPUT_FILE).as_path()) {
-                        Ok(()) => eprintln!("output recording started"),
-                        Err(e_err) => error!("failed to start output recording. Error: {}", e_err),
+                        };
                     }
-                }
-                "/dump_state" => {
-                    trace!("dumping VM state by demand");
-                    // TODO: Provide an argument to this command
-                    const STATE_FILE: &str = "vm_state.txt";
-                    match self.dump_state(Into::<PathBuf>::into(STATE_FILE).as_path()) {
-                        Ok(()) => eprintln!("saved VM state to {}", STATE_FILE),
-                        Err(st_err) => error!(
+                    "/show_replay" => {
+                        trace!("showing replay commands history");
+                        eprintln!("{}", self.get_replay(0));
+                    }
+                    "/record_output" => {
+                        // TODO: Provide an argument to this command
+                        trace!("enabling output record by demand");
+                        const OUTPUT_FILE: &str = "output.txt";
+                        match self.record_output(Into::<PathBuf>::into(OUTPUT_FILE).as_path()) {
+                            Ok(()) => eprintln!("output recording started"),
+                            Err(e_err) => error!("failed to start output recording. Error: {}", e_err),
+                        }
+                    }
+                    "/dump_state" => {
+                        trace!("dumping VM state by demand");
+                        // TODO: Provide an argument to this command
+                        const STATE_FILE: &str = "vm_state.txt";
+                        match self.dump_state(Into::<PathBuf>::into(STATE_FILE).as_path()) {
+                            Ok(()) => eprintln!("saved VM state to {}", STATE_FILE),
+                            Err(st_err) => error!(
                             "failed to save VM state to {} Error: {}",
                             STATE_FILE, st_err
                         ),
-                    }
-                }
-                "/dump_memory" => {
-                    // TODO: Provide an argument to this command
-                    const RAM_FILE: &str = "vm_memory_dump.bin";
-                    match self.dump_memory(&Into::<PathBuf>::into(RAM_FILE)) {
-                        Ok(()) => eprintln!("saved VM RAM to {}", RAM_FILE),
-                        Err(m_err) => {
-                            error!("failed to save VM RAM to {} Error: {}", RAM_FILE, m_err)
                         }
                     }
+                    "/dump_memory" => {
+                        // TODO: Provide an argument to this command
+                        const RAM_FILE: &str = "vm_memory_dump.bin";
+                        match self.dump_memory(&Into::<PathBuf>::into(RAM_FILE)) {
+                            Ok(()) => eprintln!("saved VM RAM to {}", RAM_FILE),
+                            Err(m_err) => {
+                                error!("failed to save VM RAM to {} Error: {}", RAM_FILE, m_err)
+                            }
+                        }
+                    }
+                    "/solve" => {
+                        let allowed_steps = 50;
+                        println!("searching path...");
+                        self.maze_analyzer.solve(allowed_steps);
+                    }
+                    user_command => {
+                        return Err(format!("unsupported slash command {}", user_command).into());
+                    }
                 }
-                "/solve" => {
-                    let allowed_steps = 50;
-                    println!("searching path...");
-                    self.maze_analyzer.solve(allowed_steps);
-                }
-                user_command => {
-                    return Err(format!("unsupported slash command {}", user_command).into());
-                }
+                Ok(())
+            } else {
+                error!("non slash command cannot reach this code!");
+                panic!("unsupported command {}", command);
             }
+        } else {
+            Err("this method supports only commands, which starts with '/' symbol".into())
         }
-        // Save command input to the output recording
-        if to_save {
-            // Do not pass the input command back to the maze analyzer
-            command.chars().for_each(|c| self.grab_output(c, false));
-        }
-        Ok(to_save)
     }
 }
 
@@ -1080,39 +1080,59 @@ impl VM {
         self.set_memory_by_address(Address::new(val_addr), val);
         self.step_n(3);
     }
-    // returns false if command is not stored
-    fn store_command_to_history(&mut self) {
-        debug!(
-            "storing command {} to command history",
-            self.current_command_buf.as_str()
-        );
+    fn get_command_from_buffer(&mut self) -> CommandType {
         let command = self.current_command_buf.clone();
         self.current_command_buf.clear();
-        let do_save: bool = match self.process_command(&command) {
-            Ok(s) => s,
-            Err(process_error) => {
-                warn!("processing command returned an error: {}", process_error);
-                true
-            }
-        };
-        if let Err(maze_error) = self.maze_analyzer.add_response(&command) {
-            error!(
-                "failed to add response to the maze analyzer Error: {}",
-                maze_error
-            );
-        }
-        // Disabling thig brake things, using solver_hook is not enough
-        // TODO: improve this logic later
-        //checking for Maze Analyzer
-        // Before all check if the program is in the process of solving
-        if self.maze_analyzer.is_rambling() {
-            // This will populate the replay buffer
-            self.maze_analyzer.ramble(&mut self.replay_buffer);
+        trace!("fetched command {} from buffer", command);
+        CommandType::command_type(command.as_str())
+    }
+
+    fn process_command(& mut self) -> Result<bool,Box<dyn Error>> {
+        // Only next 'enter' should be processed
+        let mut do_jump = true; // By default we jump
+        if self.spin_slash_command {
+            trace!("disabling slash spin, after consuming slash command input from user");
+            self.spin_slash_command = false;
+            do_jump = false; // but for this last time we skip newline symbol, to not provoke error message.
         }
 
-        if do_save {
-            self.commands_history.push(command);
+        let command = self.get_command_from_buffer();
+        trace!("processing command {:?}",command);
+        match command.clone() {
+            CommandType::Slash(cmd) => {
+               self.process_slash_command(command)?;
+            },
+            CommandType::Move(cmd) => {
+                cmd.chars().for_each(|c| self.grab_output(c, false));
+                self.solver_command_hook(command.clone())?;
+                self.store_command_to_history(command);
+            },
+            CommandType::Help => {
+                unimplemented!()
+
+            },
+            CommandType::Look => {
+                unimplemented!()
+
+            },
+            CommandType::Inventory(cmd) => {
+                unimplemented!()
+            }
         }
+        // let do_save: bool = self.process_slash_command(&command)?;
+        // self.solver_command_hook(&command)?;
+        // if do_save {
+        //     self.store_command_to_history(command);
+        // }
+        Ok(do_jump)
+    }
+    // returns false if command is not stored
+    fn store_command_to_history(&mut self, command: CommandType) {
+        debug!(
+            "storing command {} to command history",
+            command
+        );
+            self.commands_history.push(command.into());
         debug!("history size now is {}", self.commands_history.len());
         trace!("after accepting the user command we flush maze analyzer too");
     }
@@ -1120,14 +1140,7 @@ impl VM {
     fn grab_input(&mut self, c: char) -> bool {
         match c {
             '\n' => {
-                // Only next 'enter' should be processed
-                let mut do_jump = true; // By default we jump
-                if self.spin_slash_command {
-                    trace!("disabling slash spin");
-                    self.spin_slash_command = false;
-                    do_jump = false; // but for this last time we skip newline symbol, to not provoke error message.
-                }
-                self.store_command_to_history();
+                let do_jump  = self.process_command().unwrap_or(true);
                 do_jump
             }
             '/' => {
@@ -1192,25 +1205,24 @@ impl VM {
             self.maze_analyzer.push(c);
         }
     }
-    fn solver_hook(&mut self) -> bool {
+    fn solver_command_hook(&mut self, command: CommandType) -> Result<(), Box<dyn Error>> {
+         self.maze_analyzer.add_response(Some(command))?;
+        if self.maze_analyzer.is_rambling() {
+            // This will populate the replay buffer
+            self.maze_analyzer.ramble(&mut self.replay_buffer);
+        }
+        Ok(())
+    }
+    fn solver_response_hook(&mut self) -> Result<(),Box<dyn Error>> {
         if !self.maze_analyzer.is_rambling() || self.maze_analyzer.expect_output() {
-            return false;
+            return Err("maze analyzer does not expect an output".into());
         }
         //jump this cycle to re-analyze output
         trace!("need to re-read input");
-        match self
-            .maze_analyzer
-            .add_response(self.commands_history.last().unwrap())
-        {
-            Ok(_) => {
-                self.maze_analyzer.ramble(&mut self.replay_buffer);
-                true
-            }
-            Err(solve_err) => {
-                warn!("maze  solver failed with error: {}", solve_err);
-                false
-            }
-        }
+        let last_command = self.commands_history.last().map(|l| CommandType::command_type(l));
+        self .maze_analyzer .add_response(last_command)?;
+        self.maze_analyzer.ramble(&mut self.replay_buffer);
+        Ok(())
     }
     /// This function is an implementation of the 'in' operational instruction
     fn read_in(&mut self, a: Address) {
@@ -1225,7 +1237,7 @@ impl VM {
                 // exit earlier without reading the user input, if the autosolver is working
                 // It is needed here, before processing user input.
                 // Other invocation is in grab_input/store_command_to_history
-                if self.solver_hook() {
+                if self.solver_response_hook().is_ok() {
                     return;
                 }
                 let mut buf: [u8; 1] = [0];
