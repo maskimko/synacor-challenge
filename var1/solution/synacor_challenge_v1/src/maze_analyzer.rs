@@ -1,15 +1,15 @@
 use crate::output_parser::{OutputParser, ResponseParts};
+use clap::Command;
 use derivative::Derivative;
 use log::{debug, trace, warn};
 use std::cell::RefCell;
+use std::cmp::min;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt;
-use std::cmp::min;
 use std::mem::take;
 use std::ops::Index;
 use std::rc::{Rc, Weak};
-use clap::Command;
 
 type OptionalNode = Option<Rc<RefCell<Node>>>;
 
@@ -28,14 +28,14 @@ pub struct MazeAnalyzer {
     last_command_num: u16,
 }
 
-
 #[derive(Debug)]
 struct NodeMetadata {
     min_steps: u16,
     visits: u16,
     origin: OptionalNode,
     edges_to_visit: Vec<String>,
-    visited_edges: Vec<String>,
+    visited_edges: HashSet<String>,
+    last_visited_edge: Option<String>,
     edge_response: HashMap<Rc<ResponseParts>, String>,
 }
 #[derive(Derivative)]
@@ -47,7 +47,7 @@ struct Node {
     previous: OptionalNode,
     #[derivative(PartialEq = "ignore")]
     #[derivative(Hash = "ignore")]
-// TODO: use it  or remove it
+    // TODO: use it  or remove it
     children: Vec<Weak<Node>>,
     #[derivative(PartialEq = "ignore")]
     #[derivative(Hash = "ignore")]
@@ -81,7 +81,6 @@ impl Node {
         }
     }
 
-
     fn response(&self) -> Rc<ResponseParts> {
         self.response.clone()
     }
@@ -89,7 +88,6 @@ impl Node {
     fn previous(&self) -> OptionalNode {
         self.previous.clone()
     }
-
 }
 
 impl fmt::Display for Node {
@@ -244,7 +242,6 @@ impl MazeAnalyzer {
         .concat()
     }
 
-
     /// Validate how many steps left
     fn validate_steps_left(&self, node: &Node) -> Result<(), String> {
         if node.steps > self.steps_left {
@@ -253,8 +250,7 @@ impl MazeAnalyzer {
         Ok(())
     }
 
-    fn get_node_meta(&self, node: Rc<RefCell<Node>>) -> Option<&NodeMetadata>
-    {
+    fn get_node_meta(&self, node: Rc<RefCell<Node>>) -> Option<&NodeMetadata> {
         let n_meta = self.nodes.get(&node.borrow().response())?;
         Some(n_meta)
     }
@@ -263,47 +259,57 @@ impl MazeAnalyzer {
         self.get_node_meta(n_meta?)
     }
 
-    fn get_prev_node_resp_map(&self, node: Rc<RefCell<Node>>) -> Option<&HashMap<Rc<ResponseParts>, String>> {
-        let   n_meta = self.get_prev_node_meta(node);
-        let mapping  = &n_meta?.edge_response;
+    fn get_prev_node_resp_map(
+        &self,
+        node: Rc<RefCell<Node>>,
+    ) -> Option<&HashMap<Rc<ResponseParts>, String>> {
+        let n_meta = self.get_prev_node_meta(node);
+        let mapping = &n_meta?.edge_response;
         Some(mapping)
-
-
     }
-    fn get_node_meta_mut<'a>(&'a mut self, node: Rc<RefCell<Node>>) -> Option<&'a mut NodeMetadata>
-    {
+    fn get_node_meta_mut<'a>(
+        &'a mut self,
+        node: Rc<RefCell<Node>>,
+    ) -> Option<&'a mut NodeMetadata> {
         let n_meta = self.nodes.get_mut(&node.borrow().response())?;
         Some(n_meta)
     }
-    fn get_prev_node_meta_mut<'a>(&'a mut self, node: Rc<RefCell<Node>>) -> Option<&'a mut NodeMetadata> {
+    fn get_prev_node_meta_mut<'a>(
+        &'a mut self,
+        node: Rc<RefCell<Node>>,
+    ) -> Option<&'a mut NodeMetadata> {
         let n_meta = self.get_node_meta_mut(node)?.origin.clone();
         self.get_node_meta_mut(n_meta?)
     }
 
-    fn get_prev_node_resp_map_mut<'a>(&'a mut self, node: Rc<RefCell<Node>>) -> Option<&'a HashMap<Rc<ResponseParts>, String >> {
-         let   n_meta = self.get_prev_node_meta_mut(node);
-        let mapping  = &mut n_meta?.edge_response;
+    fn get_prev_node_resp_map_mut<'a>(
+        &'a mut self,
+        node: Rc<RefCell<Node>>,
+    ) -> Option<&'a HashMap<Rc<ResponseParts>, String>> {
+        let n_meta = self.get_prev_node_meta_mut(node);
+        let mapping = &mut n_meta?.edge_response;
         Some(mapping)
-
-
     }
-fn validate_go_back_command(node: Rc<RefCell<Node>>, cmd: &String) -> bool {
-    Self::get_exits_from_response(&node.borrow().response()).contains(cmd)
-}
-    fn get_command_back_to_previous(& self, node: Rc<RefCell<Node>>) -> Option<String> {
-       let prev_mapping = self.get_prev_node_resp_map(node.clone())?;
-       let cause_command  = prev_mapping.get(&node.borrow().response())?.to_string();
+    fn validate_go_back_command(node: Rc<RefCell<Node>>, cmd: &String) -> bool {
+        Self::get_exits_from_response(&node.borrow().response()).contains(cmd)
+    }
+    fn get_command_back_to_previous(&self, node: Rc<RefCell<Node>>) -> Option<String> {
+        let prev_mapping = self.get_prev_node_resp_map(node.clone())?;
+        let cause_command = prev_mapping.get(&node.borrow().response())?.to_string();
         let oposite_command = match cause_command.as_str() {
-        "go north" => "go south".to_string(),
+            "go north" => "go south".to_string(),
             "go south" => "go north".to_string(),
             "go west" => "go east".to_string(),
             "go east" => "go west".to_string(),
-           cmd => cmd.to_string(),
+            cmd => cmd.to_string(),
         };
         if Self::validate_go_back_command(node.clone(), &oposite_command) {
             Some(oposite_command)
-        }else {
-            warn!("Cannot validate opposite command: {}. So there is no path to return? Trying it anyway...", cause_command);
+        } else {
+            warn!(
+                "Cannot validate opposite command: {}. So there is no path to return? Trying it anyway...",
+                cause_command
+            );
             None
         }
     }
@@ -311,19 +317,17 @@ fn validate_go_back_command(node: Rc<RefCell<Node>>, cmd: &String) -> bool {
         // Maze analyzer should compare the steps value of the previous node with the minimal value from the hash map.
         // If it is greater, than it means that it was not an optimal way to go. And commands should not be enqueued the second time.
 
-       if let Some(cmd)  = self.get_next_edge(node.clone())  {
-           self.commands_queue.push_front(cmd);
-           Ok(())
-       } else {
-           //Err("No commands to visit".into())
-           // Try to return to previous
-           match self.get_command_back_to_previous(node) {
-               Some(cmd) => Ok(self.commands_queue.push_front(cmd)),
-               None => {
-                   Err("No commands to visit, and cannot return back".into())
-               }
-           }
-       }
+        if let Some(cmd) = self.get_next_edge(node.clone()) {
+            self.commands_queue.push_front(cmd);
+            Ok(())
+        } else {
+            //Err("No commands to visit".into())
+            // Try to return to previous
+            match self.get_command_back_to_previous(node) {
+                Some(cmd) => Ok(self.commands_queue.push_front(cmd)),
+                None => Err("No commands to visit, and cannot return back".into()),
+            }
+        }
     }
     // returns times node visited and min steps to visit it
     fn times_was_visited(&self, node: Rc<RefCell<Node>>) -> (u16, u16) {
@@ -338,23 +342,56 @@ fn validate_go_back_command(node: Rc<RefCell<Node>>, cmd: &String) -> bool {
         let resp = node.borrow().response();
         let prev = node.borrow().previous()?;
         let mut prev_meta = self.nodes.remove(&prev.borrow().response())?;
-        prev_meta.edge_response.insert(resp.clone(),prev_meta.visited_edges.last().unwrap().clone());
-         self.nodes.insert(prev.borrow().response(), prev_meta);
+        prev_meta
+            .edge_response
+            .insert(resp.clone(), prev_meta.last_visited_edge.clone()?);
+        self.nodes.insert(prev.borrow().response(), prev_meta);
         Some(())
     }
     fn visit_node(&mut self, node: Rc<RefCell<Node>>) {
         if let Some(n_meta) = self.nodes.get(&node.borrow().response()) {
-              self.nodes.insert(node.borrow().response(), NodeMetadata{min_steps: min(n_meta.min_steps, node.borrow().steps), visits: n_meta.visits + 1, origin: n_meta.origin.clone(), edges_to_visit: n_meta.edges_to_visit.clone(), visited_edges: n_meta.visited_edges.clone(), edge_response: n_meta.edge_response.clone() });
+            self.nodes.insert(
+                node.borrow().response(),
+                NodeMetadata {
+                    min_steps: min(n_meta.min_steps, node.borrow().steps),
+                    visits: n_meta.visits + 1,
+                    origin: n_meta.origin.clone(),
+                    edges_to_visit: n_meta.edges_to_visit.clone(),
+                    visited_edges: n_meta.visited_edges.clone(),
+                    last_visited_edge: n_meta.last_visited_edge.clone(),
+                    edge_response: n_meta.edge_response.clone(),
+                },
+            );
         } else {
-            self.nodes.insert(node.borrow().response(), NodeMetadata{min_steps: node.borrow().steps, visits: 1, origin: node.borrow().previous.clone(), edges_to_visit: Self::get_commands_from_response(&node.borrow().response()), visited_edges: vec![], edge_response: HashMap::new()});
+            self.nodes.insert(
+                node.borrow().response(),
+                NodeMetadata {
+                    min_steps: node.borrow().steps,
+                    visits: 1,
+                    origin: node.borrow().previous.clone(),
+                    edges_to_visit: Self::get_commands_from_response(&node.borrow().response()),
+                    visited_edges: HashSet::new(),
+                    last_visited_edge: None,
+                    edge_response: HashMap::new(),
+                },
+            );
         }
         // link previous
         self.link_previous(node);
     }
-    fn get_next_edge(&mut self, node: Rc<RefCell<Node>>) -> Option<String>{
+    fn get_next_edge(&mut self, node: Rc<RefCell<Node>>) -> Option<String> {
         loop {
-            let  edge =   self.nodes.get_mut(&node.borrow().response())?.edges_to_visit.pop()?;
-            if ! self.nodes.get(&node.borrow().response())?.visited_edges.contains(&edge) {
+            let edge = self
+                .nodes
+                .get_mut(&node.borrow().response())?
+                .edges_to_visit
+                .pop()?;
+            if !self
+                .nodes
+                .get(&node.borrow().response())?
+                .visited_edges
+                .contains(&edge)
+            {
                 return Some(edge);
             }
         }
@@ -363,7 +400,8 @@ fn validate_go_back_command(node: Rc<RefCell<Node>>, cmd: &String) -> bool {
     fn visit_edge(&mut self, node: Rc<RefCell<Node>>, command: &str) {
         if let Some(n_meta) = self.nodes.get_mut(&node.borrow().response()) {
             n_meta.edges_to_visit.retain(|c| c != command);
-            n_meta.visited_edges.push(command.to_string());
+            n_meta.visited_edges.insert(command.to_string());
+            n_meta.last_visited_edge = Some(command.to_string());
             if n_meta.edges_to_visit.is_empty() {
                 self.completed_nodes.insert(node.borrow().response());
             }
