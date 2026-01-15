@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::mem::take;
-use std::ops::Index;
+use std::ops::{Deref, Index};
 use std::rc::{Rc, Weak};
 
 type OptionalNode = Option<Rc<RefCell<Node>>>;
@@ -38,6 +38,7 @@ struct NodeMetadata {
     last_visited_edge: Option<String>,
     edge_response: HashMap<Rc<ResponseParts>, String>,
     id: u16,
+    auxiliary_commands: HashMap<String,String>
 }
 
 #[derive(Derivative)]
@@ -116,17 +117,25 @@ impl fmt::Display for Node {
 pub enum CommandType {
     Look,
     Help,
-    Inventory(String),
+    InventoryTake(String),
+    InventoryDrop(String),
+    InventoryLook(String),
+    InventoryUse(String),
     Move(String),
     Slash(String),
+    Empty,
 }
 impl CommandType {
     pub fn command_type(cmd: &str) -> CommandType{
         match cmd {
             "look" => CommandType::Look,
             "help" => CommandType::Help,
-            c if   c.starts_with("take") ||c.starts_with("look ") || c.starts_with("use") || c.starts_with("drop")=> CommandType::Inventory(c.to_string()),
+            c if   c.starts_with("take ") => CommandType::InventoryTake(c.to_string()[5..].to_string()),
+            c if   c.starts_with("look ")=> CommandType::InventoryLook(c.to_string()[5..].to_string()),
+            c if    c.starts_with("use ") => CommandType::InventoryUse(c.to_string()[4..].to_string()),
+            c if    c.starts_with("drop ")=> CommandType::InventoryDrop(c.to_string()[5..].to_string()),
             c if c.starts_with("/") => CommandType::Slash(c.to_string()),
+            c if c.trim().is_empty()=> CommandType::Empty,
             c => CommandType::Move(c.to_string()),
         }
     }
@@ -142,9 +151,13 @@ impl fmt::Display for CommandType {
         match self {
             CommandType::Look => write!(f, "look"),
            CommandType::Help => write!(f, "help"),
-            CommandType::Inventory(c) => write!(f, "{}", c),
+            CommandType::InventoryTake(c) => write!(f, "take {}", c),
+             CommandType::InventoryDrop(c)=> write!(f, "drop {}", c),
+             CommandType::InventoryLook(c)=> write!(f, "look {}", c),
+             CommandType::InventoryUse(c)=> write!(f, "use {}", c),
             CommandType::Move(c) => write!(f, "{}", c),
            CommandType::Slash(c) => write!(f, "{}", c),
+            CommandType::Empty => write!(f, "[EMPTY (user pressed just enter)]"),
         }
     }
 }
@@ -174,8 +187,108 @@ impl MazeAnalyzer {
         self.solution_commands.clone()
     }
 
+    fn set_aux_commands(&mut self, output: String, command: Option<CommandType>) -> Option<()> {
+       let resp = self.head.clone()?.borrow().response();
+       let mut  n_meta = self.nodes.remove(&resp)?;
+        n_meta.auxiliary_commands.insert(command?.to_string(),output);
+        // And return it back
+        self.nodes.insert(resp, n_meta);
+        Some(())
+    }
+    fn add_response_with_inv(&mut self, command: CommandType) -> Result<(), Box<dyn Error>> {
+        if self.response_buffer.is_empty() {
+            return Ok(());
+        }
+        let oan: OutputParser = OutputParser::new(self.response_buffer.as_str());
+        let resp_parts = oan.parse()?;
+        let head = self.head.clone().ok_or("no head")?;
+        self.visit_edge(head.clone(), command.to_string().as_str());
+        let mut  n_meta = self.nodes.remove(&head.borrow().response()).ok_or::<String>("no node metadata".into())?;
+
+        match command {
+            CommandType::InventoryTake(item) => {
+                let head_response = head.borrow().response();
+                let mut inventory = head.borrow().response().inventory.clone();
+                let mut thing_of_interest = head.borrow().response().things_of_interest.iter().filter(|&t| !t.eq(item.as_str())).map(String::to_string).collect::<Vec<String>>();
+                inventory.push(item);
+                let new_response : ResponseParts = ResponseParts{
+                    inventory: inventory,
+                    things_of_interest: thing_of_interest,
+                    pretext: head_response.pretext.clone(),
+                    message: head_response.message.clone(),
+                    title: head_response.title.clone(),
+                    exits: head_response.exits.clone(),
+                    dont_understand: head_response.dont_understand.clone(),
+                };
+// TODO: Update first if old head is first
+                let mut new_node = Node::new_with_prev(new_response,head.borrow().previous.clone());
+                new_node.steps = head.borrow().steps+1;
+                self.head = Some(Rc::new(RefCell::new(new_node)));
+                self.nodes.insert(self.head.clone().unwrap().borrow().response(), n_meta);
+
+
+            },
+            CommandType::InventoryDrop(_) => {
+            unimplemented!()    ;
+            },
+            _ => panic!("never shoul dbe called"),
+
+        }
+
+        self.commands_counter += 1;
+        Ok(())
+    }
+    fn modify_prev_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
+        if self.response_buffer.is_empty() ||  command.is_none() {
+            return Ok(());
+        }
+        let oan: OutputParser = OutputParser::new(self.response_buffer.as_str());
+        let resp_parts = oan.parse()?;
+        self.flush();
+        self.commands_counter +=1;
+        self.visit_edge(self.head.clone().ok_or::<String>("no head".into())?.clone(), command.clone().ok_or::<String>("no command".into())?.to_string().as_str());
+        self.set_aux_commands(resp_parts.pretext, command).ok_or("failed to insert command".into())
+    }
+    pub fn dispatch_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
+        if self.response_buffer.is_empty() {
+            return Ok(());
+        }
+        match command {
+            Some(cmd) => {
+                match cmd.clone() {
+                    CommandType::Look | CommandType::Help | CommandType::InventoryLook(_) |CommandType::InventoryUse(_) => {
+                        self.modify_prev_response(Some(cmd))
+                    },
+                    CommandType::InventoryTake(item) => {
+                        self.add_response_with_inv(CommandType::InventoryTake(item))?;
+                        self.modify_prev_response(Some(cmd))
+                    }
+                    CommandType::InventoryDrop(item) => {
+                        self.add_response_with_inv(CommandType::InventoryDrop(item))
+                    }
+                    CommandType::Move(edge) => {
+                        debug!("dispatching {} command", edge);
+                        self.add_response(Some(cmd))
+                    },
+                    CommandType::Slash(_) => {
+                        Err("slash command  should not be dispatched".into())
+                    },
+                    CommandType::Empty => {
+                        debug!("user issued empty command. No operations performed");
+                        // Tolerating
+                        Ok(())
+                    }
+                }
+            },
+            None => {
+                //This usually means that this user's first command was /solve
+                debug!("dispatching to save initial response");
+                self.add_response(None)
+            }
+        }
+    }
     /// This function adds response from the inner resonse buffer
-    pub fn add_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
+    fn add_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
         if self.response_buffer.is_empty() {
             return Ok(());
         }
@@ -387,6 +500,7 @@ impl MazeAnalyzer {
                     last_visited_edge: n_meta.last_visited_edge.clone(),
                     edge_response: n_meta.edge_response.clone(),
                     id: n_meta.id,
+                    auxiliary_commands: n_meta.auxiliary_commands.clone(),
                 },
             );
         } else {
@@ -401,6 +515,7 @@ impl MazeAnalyzer {
                     last_visited_edge: None,
                     edge_response: HashMap::new(),
                     id: self.get_node_meta_id(),
+                    auxiliary_commands: HashMap::new(),
                 },
             );
         }
