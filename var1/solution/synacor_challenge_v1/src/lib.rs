@@ -145,7 +145,7 @@ fn print_slash_command_help() {
     eprintln!("/show_history - show commands history");
     eprintln!("/save_history - save commands history to file");
     eprintln!("/record_output - start output recording");
-    eprintln!("/solve - start automatic path search");
+    eprintln!("/solve [steps limit] - start automatic path search (Default steps limit is 100)");
 }
 
 /// This function composes u16 number from little endian byte pair of low byte and high byte
@@ -387,9 +387,13 @@ impl<'b> aux::Commander<'b> for VM {
                         }
                     }
                     "/solve" => {
-                        let allowed_steps = 150;
                         println!("searching path...");
-                        self.maze_analyzer.solve(allowed_steps);
+                        self.maze_analyzer.solve(maze_analyzer::ALLOWED_STEPS);
+                    }
+                    solve if solve.starts_with("/solve ") => {
+                        let steps = solve.strip_prefix("/solve ").unwrap_or(&format!("{}", maze_analyzer::ALLOWED_STEPS)).to_owned().parse::<u16>()?;
+                        println!("searching path...");
+                        self.maze_analyzer.solve(steps);
                     }
                     user_command => {
                         return Err(format!("unsupported slash command {}", user_command).into());
@@ -1238,8 +1242,8 @@ impl VM {
         }
     }
     fn solver_command_hook(&mut self, command: CommandType) -> Result<(), Box<dyn Error>> {
-        self.maze_analyzer.dispatch_response(Some(command))?;
         if self.maze_analyzer.is_rambling() {
+            self.maze_analyzer.dispatch_response(Some(command))?;
             // This will populate the replay buffer
             self.maze_analyzer.ramble(&mut self.replay_buffer);
         }

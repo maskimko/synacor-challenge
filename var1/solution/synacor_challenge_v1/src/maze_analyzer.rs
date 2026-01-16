@@ -13,6 +13,7 @@ use std::rc::{Rc, Weak};
 
 type OptionalNode = Option<Rc<RefCell<Node>>>;
 
+pub const ALLOWED_STEPS : u16= 100;
 #[derive(Debug)]
 pub struct MazeAnalyzer {
     // Maps response to the tuple of minimal steps, visits, and origin node if any
@@ -26,6 +27,7 @@ pub struct MazeAnalyzer {
     solution_commands: Option<Vec<String>>,
     commands_counter: u16,
     last_command_num: u16,
+    inventory_needs_update: bool
 }
 
 #[derive(Debug)]
@@ -56,9 +58,6 @@ struct Node {
     #[derivative(Hash = "ignore")]
     // Commands to execute
     steps: u16,
-    #[derivative(PartialEq = "ignore")]
-    #[derivative(Hash = "ignore")]
-    inventory_needs_update: bool
 }
 
 impl Node {
@@ -68,7 +67,6 @@ impl Node {
             steps: u16::MAX,
             previous: None,
             children: vec![],
-            inventory_needs_update: false,
         }
     }
     fn new_with_prev(mut response: ResponseParts, previous: OptionalNode) -> Self {
@@ -187,6 +185,7 @@ impl MazeAnalyzer {
             commands_counter: 0,
             last_command_num: 0,
             completed_nodes: HashSet::new(),
+            inventory_needs_update: false
         }
     }
 
@@ -214,7 +213,7 @@ impl MazeAnalyzer {
         let head = self.head.clone().ok_or("no head")?;
         // Replace head
         let mut new_node =
-            Node::new_with_prev(new_response, head.borrow().previous.clone());
+        Node{response: Rc::new(new_response), steps: head.borrow().steps+1, previous: head.borrow().previous().clone(), children: head.borrow().children.clone()};
         new_node.steps = head.borrow().steps + 1;
         self.head = Some(Rc::new(RefCell::new(new_node)));
         if head.borrow().previous().is_none() {
@@ -244,57 +243,21 @@ impl MazeAnalyzer {
                 let mut inventory = head_response.inventory.clone();
                 let mut things = head_response.things_of_interest.clone();
                 things.retain(|i| !i.eq(&item));
-                // Take everything of interest except the item
-                // let thing_of_interest = head
-                //     .borrow()
-                //     .response()
-                //     .things_of_interest
-                //     .iter()
-                //     .filter(|&t| !t.eq(item.as_str()))
-                //     .map(String::to_string)
-                //     .collect::<Vec<String>>();
                 inventory.push(item);
-                // let new_response: ResponseParts = ResponseParts {
-                //     inventory: inventory,
-                //     things_of_interest: things,
-                //     pretext: head_response.pretext.clone(),
-                //     message: head_response.message.clone(),
-                //     title: head_response.title.clone(),
-                //     exits: head_response.exits.clone(),
-                //     dont_understand: head_response.dont_understand.clone(),
-                // };
-                // // // Replace head
-                // // let mut new_node =
-                // //     Node::new_with_prev(new_response, head.borrow().previous.clone());
-                // // new_node.steps = head.borrow().steps + 1;
-                // // self.head = Some(Rc::new(RefCell::new(new_node)));
-                // // if head.borrow().previous().is_none() {
-                // //     self.first = self.head.clone();
-                // // }
-                // self.replace_head(new_response)?;
                 self.update_inventory(head.clone(), inventory, Some(things))?;
 
-                head.borrow_mut().inventory_needs_update = true;
+                self.inventory_needs_update = true;
             }
             CommandType::InventoryDrop(item) => {
                 debug!("droppoing {} from inventory", item);
                 let mut inventory = head.borrow().response().inventory.clone();
                 inventory.retain(|i| !i.eq(&item));
-               //  let new_response: ResponseParts = ResponseParts {
-               //      inventory: inventory,
-               //      things_of_interest: head_response.things_of_interest.clone(),
-               //      pretext: head_response.pretext.clone(),
-               //      message: head_response.message.clone(),
-               //      title: head_response.title.clone(),
-               //      exits: head_response.exits.clone(),
-               //      dont_understand: head_response.dont_understand.clone(),
-               //  };
-               // self.replace_head(new_response)?;
                 self.update_inventory(head.clone(), inventory,None)?;
-                head.borrow_mut().inventory_needs_update = true;
+                self.inventory_needs_update = true;
             },
             CommandType::InventoryUse(item) => {
                 debug!("using {} from inventory", item);
+                self.inventory_needs_update = true;
             },
             CommandType::InventoryLook(item) => {
                 debug!("using {} from inventory", item);
@@ -302,28 +265,12 @@ impl MazeAnalyzer {
             CommandType::Inventory => {
                 debug!("updating inventory");
                 let mut inventory = head.borrow().response().inventory.clone();
-                //
-                // let new_response: ResponseParts = ResponseParts {
-                //     inventory: inventory,
-                //     things_of_interest: head_response.things_of_interest.clone(),
-                //     pretext: head_response.pretext.clone(),
-                //     message: head_response.message.clone(),
-                //     title: head_response.title.clone(),
-                //     exits: head_response.exits.clone(),
-                //     dont_understand: head_response.dont_understand.clone(),
-                // };
-                // self.replace_head(new_response)?;
                 self.update_inventory(head.clone(), resp_parts.inventory,None)?;
-                head.borrow_mut().inventory_needs_update = false;
+                self.inventory_needs_update = false;
 
             }
             _ => panic!("never should be called"),
         }
-
-        // self.visit_edge(
-        //     self.head.clone().ok_or::<String>("no head".into())?,
-        //     command.to_string().as_str(),
-        // );
         self.nodes .insert(self.head.clone().unwrap().borrow().response(), n_meta);
         self.set_aux_commands(resp_parts.pretext, Some(command));
         self.flush();
@@ -509,7 +456,7 @@ impl MazeAnalyzer {
 
     /// Validate how many steps left
     fn validate_steps_left(&self, node: &Node) -> Result<(), String> {
-        if node.steps > self.steps_left {
+        if self.steps_left == 0 {
             return Err("exhausted steps".into());
         }
         Ok(())
@@ -589,7 +536,10 @@ impl MazeAnalyzer {
         // Maze analyzer should compare the steps value of the previous node with the minimal value from the hash map.
         // If it is greater, than it means that it was not an optimal way to go. And commands should not be enqueued the second time.
 
-        if let Some(cmd) = self.get_next_edge(node.clone(), visits_limit) {
+        if self.inventory_needs_update {
+            self.commands_queue.push_front("inv".to_string());
+            Ok(())
+        } else if let Some(cmd) = self.get_next_edge(node.clone(), visits_limit) {
             self.commands_queue.push_front(cmd);
             Ok(())
         } else if !self.commands_queue.is_empty()  {
@@ -730,6 +680,7 @@ impl MazeAnalyzer {
             cmd.chars().for_each(|c| replay_buf.push_back(c));
             replay_buf.push_back('\n');
             self.last_command_num = self.commands_counter;
+            self.steps_left -= 1; // decrementing each command we issued
         }
 
         Ok(vec![])
