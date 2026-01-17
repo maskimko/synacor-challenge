@@ -628,6 +628,10 @@ impl MazeAnalyzer {
         false
     }
     fn get_next_edge(&mut self, node: Rc<RefCell<Node>>, max_times_visited: u16) -> Option<String> {
+        if node.borrow().response().title == "Passage" {
+            // TODO: delete this line
+            warn!("important debug point")
+        }
         let mut n_meta= self .nodes .get_mut(&node.borrow().response())?;
         while let Some(edge) = n_meta
             .edges_to_visit
