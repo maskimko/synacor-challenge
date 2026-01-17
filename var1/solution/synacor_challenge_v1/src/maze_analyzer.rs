@@ -616,7 +616,10 @@ impl MazeAnalyzer {
     }
     fn is_a_dangerous_edge(node: Rc<RefCell<Node>>, command: &String) -> bool {
         let resp = node.borrow().response();
-       // if resp.message.contains("You are likely to be eaten by a grue.") ||resp.message.contains("Without a source of light, you have become hopelessly lost and are fumbling around in the darkness.")  {
+        // No fear with lit lantern
+        if node.borrow().response().inventory.contains(&"lit lantern".to_string()) {
+            return false
+        }
            if resp.message.contains("You are likely to be eaten by a grue.") ||resp.message.contains("have become hopelessly lost")  {
            if  command.contains("continue") {
               return true;
