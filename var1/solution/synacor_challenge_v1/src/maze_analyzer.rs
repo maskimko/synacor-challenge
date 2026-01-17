@@ -27,7 +27,10 @@ pub struct MazeAnalyzer {
     solution_commands: Option<Vec<String>>,
     commands_counter: u16,
     last_command_num: u16,
-    inventory_needs_update: bool
+    inventory_needs_update: bool,
+    // Tracks the used inventory globally (not per node)
+    // Maps inventory name to tuple of uses and looks
+    inventory_global: HashMap<String,(u16, u16)>
 }
 
 #[derive(Debug)]
@@ -185,7 +188,8 @@ impl MazeAnalyzer {
             commands_counter: 0,
             last_command_num: 0,
             completed_nodes: HashSet::new(),
-            inventory_needs_update: false
+            inventory_needs_update: false,
+            inventory_global: HashMap::new(),
         }
     }
 
@@ -245,7 +249,6 @@ impl MazeAnalyzer {
                 things.retain(|i| !i.eq(&item));
                 inventory.push(item);
                 self.update_inventory(head.clone(), inventory, Some(things))?;
-
                 self.inventory_needs_update = true;
             }
             CommandType::InventoryDrop(item) => {
@@ -257,10 +260,12 @@ impl MazeAnalyzer {
             },
             CommandType::InventoryUse(item) => {
                 debug!("using {} from inventory", item);
+                (*self.inventory_global.entry(item).or_insert((0,0))).0 += 1;
                 self.inventory_needs_update = true;
             },
             CommandType::InventoryLook(item) => {
                 debug!("using {} from inventory", item);
+                (*self.inventory_global.entry(item).or_insert((0,0))).1 += 1;
             },
             CommandType::Inventory => {
                 debug!("updating inventory");
@@ -279,6 +284,15 @@ impl MazeAnalyzer {
     }
     fn update_inventory(&mut self, node: Rc<RefCell<Node>>, items: Vec<String>, things: Option<Vec<String>>) -> Result<(), Box<dyn Error>> {
 
+       // Update global inventory
+        // Remove items from global inventory, which are not present in the argument
+        let mut global_inv = &mut self.inventory_global;
+        // Lets not differentiate between 'lit lantern' and 'lantern'
+        let allowed : HashSet<String> = items.iter().map(|l|  { if l == "lit lantern" {"lantern".to_string()} else { l.clone()}}).collect();
+        global_inv.retain(|i, _| allowed.contains(i));
+        allowed.into_iter().for_each(|i|  { global_inv.entry(i).or_insert((0, 0)); });
+
+      // Update node inventory
         let head_response = node.borrow().response();
         let new_response: ResponseParts = ResponseParts {
             inventory: items,
@@ -330,8 +344,8 @@ impl MazeAnalyzer {
             Some(cmd) => {
                 match cmd.clone() {
                     CommandType::Look
-                    | CommandType::Help
-|                    CommandType::InventoryLook(_)=> self.modify_prev_response(Some(cmd)),
+                    | CommandType::Help => self.modify_prev_response(Some(cmd)),
+                    CommandType::InventoryLook(_)
                     | CommandType::InventoryUse(_)
                     | CommandType::InventoryTake(_)
                     | CommandType::Inventory
@@ -542,8 +556,8 @@ impl MazeAnalyzer {
         } else if let Some(cmd) = self.get_next_edge(node.clone(), visits_limit) {
             self.commands_queue.push_front(cmd);
             Ok(())
-        } else if !self.commands_queue.is_empty()  {
-            Ok(())
+        // } else if !self.commands_queue.is_empty()  {
+        //     Ok(())
         } else {
 
             // Try to return to previous
@@ -627,11 +641,24 @@ impl MazeAnalyzer {
        }
         false
     }
+
+    fn is_looked_or_used_inventory(inventory_global: &HashMap<String,(u16, u16)>, edge: &str) -> bool{
+        match edge {
+            l if edge.starts_with("look ") => {
+                inventory_global.get(&l.strip_prefix("look ").unwrap().to_string()).map(|(_, l)| l ).unwrap_or(&0).cmp(&0).is_gt()
+            },
+            l if edge.starts_with("use ") => {
+                inventory_global.get(&l.strip_prefix("use ").unwrap().to_string()).map(|(u, _)| u ).unwrap_or(&0).cmp(&0).is_gt()
+            },
+            _ => false,
+        }
+    }
     fn get_next_edge(&mut self, node: Rc<RefCell<Node>>, max_times_visited: u16) -> Option<String> {
         if node.borrow().response().title == "Passage" {
             // TODO: delete this line
             warn!("important debug point")
         }
+        let global_inv = &self.inventory_global;
         let mut n_meta= self .nodes .get_mut(&node.borrow().response())?;
         while let Some(edge) = n_meta
             .edges_to_visit
@@ -639,7 +666,9 @@ impl MazeAnalyzer {
         {
             if !n_meta
                 .visited_edges
-                .contains_key(&edge) && !Self::is_a_dangerous_edge(node.clone(), &edge)
+                .contains_key(&edge)
+                && !Self::is_a_dangerous_edge(node.clone(), &edge)
+                && !Self::is_looked_or_used_inventory(global_inv, &edge)
             {
                 return Some(edge);
             }
