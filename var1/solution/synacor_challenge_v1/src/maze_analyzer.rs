@@ -7,9 +7,11 @@ use std::cmp::min;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt;
-use std::mem::take;
+use std::hash::{Hash, Hasher};
 use std::ops::{Deref, Index};
 use std::rc::{Rc, Weak};
+
+use std::hash::DefaultHasher;
 
 type OptionalNode = Option<Rc<RefCell<Node>>>;
 
@@ -18,7 +20,10 @@ pub const ALLOWED_STEPS : u16= 100;
 pub struct MazeAnalyzer {
     // Maps response to the tuple of minimal steps, visits, and origin node if any
     nodes: HashMap<Rc<ResponseParts>, NodeMetadata>,
-    completed_nodes: HashSet<Rc<ResponseParts>>,
+    // Maps node complete, if all its edges are completed for particular inventory configuration
+    // keys is computed inventory hash
+    completed_nodes: HashMap<String, HashSet<Rc<ResponseParts>>>,
+    last_visited_node: OptionalNode,
     response_buffer: String,
     first: OptionalNode,
     head: OptionalNode,
@@ -30,10 +35,11 @@ pub struct MazeAnalyzer {
     inventory_needs_update: bool,
     // Tracks the used inventory globally (not per node)
     // Maps inventory name to tuple of uses and looks
-    inventory_global: HashMap<String,(u16, u16)>
+    inventory_global: HashMap<String,(u16, u16)>,
+    last_node_id: Option<u16>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct NodeMetadata {
     min_steps: u16,
     visits: u16,
@@ -41,10 +47,17 @@ struct NodeMetadata {
     edges_to_visit: Vec<String>,
     visited_edges: HashMap<String, u16>, // Stores number of visits
     last_visited_edge: Option<String>,
-    edge_response: HashMap<Rc<ResponseParts>, String>,
+    // Marks edge completed for some set of inventory
+    // In other words, with this tools this edge was completed if the node leading to this edge is completed too
+    // Keys in inventory computed hash
+    completed_edges: HashMap<String,String>,
+    response_2_edge: HashMap<Rc<ResponseParts>, String>,
+    edge_2_response: HashMap<String, Rc<ResponseParts>>,
+
     id: u16,
     auxiliary_commands: HashMap<String, String>,
 }
+
 
 #[derive(Derivative)]
 #[derivative(Debug, PartialEq, Eq, Hash)]
@@ -61,18 +74,20 @@ struct Node {
     #[derivative(Hash = "ignore")]
     // Commands to execute
     steps: u16,
+    id: u16,
 }
 
 impl Node {
-    fn new(response: ResponseParts) -> Self {
+    fn new(id: u16, response: ResponseParts) -> Self {
         Node {
             response: Rc::new(response),
             steps: u16::MAX,
             previous: None,
             children: vec![],
+            id: id,
         }
     }
-    fn new_with_prev(mut response: ResponseParts, previous: OptionalNode) -> Self {
+    fn new_with_prev(id: u16, mut response: ResponseParts, previous: OptionalNode) -> Self {
         match previous {
             Some(prev) => {
                 let steps = prev.borrow().steps + 1;
@@ -81,11 +96,11 @@ impl Node {
                 let node = Node {
                     steps,
                     previous: Some(prev),
-                    ..Self::new(response)
+                    ..Self::new(id, response)
                 };
                 node
             }
-            None => Self::new(response),
+            None => Self::new(id, response),
         }
     }
 
@@ -187,10 +202,21 @@ impl MazeAnalyzer {
             solution_commands: None,
             commands_counter: 0,
             last_command_num: 0,
-            completed_nodes: HashSet::new(),
+            // Marks nodes completed for particular inventory set
+            completed_nodes: HashMap::new(),
             inventory_needs_update: false,
             inventory_global: HashMap::new(),
+            last_visited_node: None,
+            last_node_id: None,
         }
+    }
+
+    fn global_inventory_hash(&self) -> String {
+        let mut hasher = DefaultHasher::new();
+       let mut  sorted_inv : Vec<String> =  self.inventory_global.keys().cloned().collect();
+        sorted_inv.sort();
+       sorted_inv.hash(&mut hasher) ;
+        hasher.finish().to_string()
     }
 
     pub fn is_rambling(&self) -> bool {
@@ -217,7 +243,7 @@ impl MazeAnalyzer {
         let head = self.head.clone().ok_or("no head")?;
         // Replace head
         let mut new_node =
-        Node{response: Rc::new(new_response), steps: head.borrow().steps+1, previous: head.borrow().previous().clone(), children: head.borrow().children.clone()};
+        Node{response: Rc::new(new_response), steps: head.borrow().steps+1, previous: head.borrow().previous().clone(), children: head.borrow().children.clone(), id: head.borrow().id};
         new_node.steps = head.borrow().steps + 1;
         self.head = Some(Rc::new(RefCell::new(new_node)));
         if head.borrow().previous().is_none() {
@@ -233,8 +259,8 @@ impl MazeAnalyzer {
         let resp_parts = oan.parse()?;
         let head = self.head.clone().ok_or("no head")?;
         let head_response = head.borrow().response();
-        // Visit edge
-        self.visit_edge(head.clone(), command.to_string().as_str());
+        // Visit edge is not needed here, because no I visit is when issue it to the replay buffer.
+        // self.visit_edge(head.clone(), command.to_string().as_str());
 
         let mut n_meta = self
             .nodes
@@ -288,9 +314,9 @@ impl MazeAnalyzer {
         // Remove items from global inventory, which are not present in the argument
         let mut global_inv = &mut self.inventory_global;
         // Lets not differentiate between 'lit lantern' and 'lantern'
-        let allowed : HashSet<String> = items.iter().map(|l|  { if l == "lit lantern" {"lantern".to_string()} else { l.clone()}}).collect();
+        let allowed : HashSet<&String> = items.iter().collect();
         global_inv.retain(|i, _| allowed.contains(i));
-        allowed.into_iter().for_each(|i|  { global_inv.entry(i).or_insert((0, 0)); });
+        allowed.into_iter().for_each(|i|  { global_inv.entry(i.clone()).or_insert((0, 0)); });
 
       // Update node inventory
         let head_response = node.borrow().response();
@@ -376,29 +402,38 @@ impl MazeAnalyzer {
             return Ok(());
         }
         let oan: OutputParser = OutputParser::new(self.response_buffer.as_str());
+        let is_start_of_graph = self.head.is_none();
         let resp_parts = oan.parse()?;
-        match self.head.clone() {
-            Some(head) => {
-                // TODO: Improve with match statement
+        // Assign ID if known
+        let node_meta_id = self.nodes.get(&resp_parts).map(|m| m.id).unwrap_or(self.get_node_meta_id());
 
-                self.visit_edge(head.clone(), command.unwrap().to_string().as_str());
-                // with look, help, and inv commands (take, use, drop, look) let's not create a new node
-                let new_node = Node::new_with_prev(resp_parts, Some(head.clone()));
-                let steps = new_node.steps;
-                // Let's not insert node here, and keep this data structure for tracking visited nodes during the search
-                // self.nodes .insert(new_node.response(), (steps, Some(head.clone())));
-                self.head = Some(Rc::new(RefCell::new(new_node)))
-            }
-            None => {
-                let mut node = Node::new(resp_parts);
-                node.steps = 0;
-                // Let's not insert node here, and keep this data structure for tracking visited nodes during the search
-                // self.nodes.insert(node.response(), (0, None));
-                let first = Rc::new(RefCell::new(node));
-                self.first = Some(first.clone());
-                self.head = Some(first);
-            }
+        let mut new_node = Node::new_with_prev(node_meta_id, resp_parts, self.head.clone());
+        if is_start_of_graph {
+            new_node.steps = 0;
         }
+        self.head = Some(Rc::new(RefCell::new(new_node))).clone();
+        if is_start_of_graph {
+            self.first = self.head.clone();
+        }
+        // match self.head.clone() {
+        //     Some(head) => {
+        //         // TODO: Improve with match statement
+        //         // Probably I should visit the edge, just before flushing it to the replay buffer.
+        //         self.visit_edge(head.clone(), command.unwrap().to_string().as_str());
+        //         // with look, help, and inv commands (take, use, drop, look) let's not create a new node
+        //         let new_node = Node::new_with_prev(resp_parts, Some(head.clone()));
+        //         self.head = Some(Rc::new(RefCell::new(new_node)))
+        //     }
+        //     None => {
+        //         let mut node = Node::new(resp_parts);
+        //         node.steps = 0;
+        //         // Let's not insert node here, and keep this data structure for tracking visited nodes during the search
+        //         // self.nodes.insert(node.response(), (0, None));
+        //         let first = Rc::new(RefCell::new(node));
+        //         self.first = Some(first.clone());
+        //         self.head = Some(first);
+        //     }
+        // }
         self.flush();
         self.commands_counter += 1;
         Ok(())
@@ -490,30 +525,30 @@ impl MazeAnalyzer {
         node: Rc<RefCell<Node>>,
     ) -> Option<&HashMap<Rc<ResponseParts>, String>> {
         let n_meta = self.get_prev_node_meta(node);
-        let mapping = &n_meta?.edge_response;
+        let mapping = &n_meta?.response_2_edge;
         Some(mapping)
     }
-    fn get_node_meta_mut<'a>(
-        &'a mut self,
+    fn get_node_meta_mut(
+        &mut self,
         node: Rc<RefCell<Node>>,
-    ) -> Option<&'a mut NodeMetadata> {
+    ) -> Option<&mut NodeMetadata> {
         let n_meta = self.nodes.get_mut(&node.borrow().response())?;
         Some(n_meta)
     }
-    fn get_prev_node_meta_mut<'a>(
-        &'a mut self,
+    fn get_prev_node_meta_mut(
+        &mut self,
         node: Rc<RefCell<Node>>,
-    ) -> Option<&'a mut NodeMetadata> {
+    ) -> Option<&mut NodeMetadata> {
         let n_meta = self.get_node_meta_mut(node)?.origin.clone();
         self.get_node_meta_mut(n_meta?)
     }
 
-    fn get_prev_node_resp_map_mut<'a>(
-        &'a mut self,
+    fn get_prev_node_resp_map_mut(
+        &mut self,
         node: Rc<RefCell<Node>>,
-    ) -> Option<&'a HashMap<Rc<ResponseParts>, String>> {
+    ) -> Option<&HashMap<Rc<ResponseParts>, String>> {
         let n_meta = self.get_prev_node_meta_mut(node);
-        let mapping = &mut n_meta?.edge_response;
+        let mapping = &mut n_meta?.response_2_edge;
         Some(mapping)
     }
     fn validate_go_back_command(node: Rc<RefCell<Node>>, cmd: &String) -> bool {
@@ -580,53 +615,50 @@ impl MazeAnalyzer {
     fn link_previous(&mut self, node: Rc<RefCell<Node>>) -> Option<()> {
         let resp = node.borrow().response();
         let prev = node.borrow().previous()?;
+        let original_edge = self.nodes.get(&prev.borrow().response())?.last_visited_edge.clone()?;
+        // TODO: rewrite this with entry API
         let mut prev_meta = self.nodes.remove(&prev.borrow().response())?;
         prev_meta
-            .edge_response
+            .response_2_edge
             .insert(resp.clone(), prev_meta.last_visited_edge.clone()?);
         self.nodes.insert(prev.borrow().response(), prev_meta);
+
+        self.nodes.entry(prev.borrow().response()).and_modify(|prev_meta| {prev_meta.edge_2_response.insert(original_edge, resp.clone());});
+        // Probably I have somehow to link it forward...  edge_response somewhat can be used for it
         Some(())
     }
     /// Creates node metadata or increments visits counter
     fn visit_node(&mut self, node: Rc<RefCell<Node>>) {
-        if let Some(mut n_meta) = self.nodes.get_mut(&node.borrow().response()) {
-            n_meta.visits += 1;
-            // self.nodes.insert(
-            //     node.borrow().response(),
-            //     NodeMetadata {
-            //         min_steps: min(n_meta.min_steps, node.borrow().steps),
-            //         visits: n_meta.visits + 1,
-            //         origin: n_meta.origin.clone(),
-            //         edges_to_visit: n_meta.edges_to_visit.clone(),
-            //         visited_edges: n_meta.visited_edges.clone(),
-            //         last_visited_edge: n_meta.last_visited_edge.clone(),
-            //         edge_response: n_meta.edge_response.clone(),
-            //         id: n_meta.id,
-            //         auxiliary_commands: n_meta.auxiliary_commands.clone(),
-            //     },
-            // );
-        } else {
-            self.nodes.insert(
-                node.borrow().response(),
-                NodeMetadata {
-                    min_steps: node.borrow().steps,
-                    visits: 1,
-                    origin: node.borrow().previous.clone(),
-                    edges_to_visit: Self::get_commands_from_response(&node.borrow().response()),
-                    visited_edges: HashMap::new(),
-                    last_visited_edge: None,
-                    edge_response: HashMap::new(),
-                    id: self.get_node_meta_id(),
-                    auxiliary_commands: HashMap::new(),
-                },
-            );
-        }
+        self.nodes.entry(node.borrow().response()).or_insert(NodeMetadata{id: node.borrow().id, min_steps: node.borrow().steps, origin: node.borrow().previous.clone(), edges_to_visit: Self::get_commands_from_response(&node.borrow().response()), ..NodeMetadata::default() }).visits += 1;
+        // if let Some(mut n_meta) = self.nodes.get_mut(&node.borrow().response()) {
+        //     n_meta.visits += 1;
+        // } else {
+        //     self.nodes.insert(
+        //         node.borrow().response(),
+        //         NodeMetadata {
+        //             min_steps: node.borrow().steps,
+        //             visits: 1,
+        //             origin: node.borrow().previous.clone(),
+        //             edges_to_visit: Self::get_commands_from_response(&node.borrow().response()),
+        //             visited_edges: HashMap::new(),
+        //             last_visited_edge: None,
+        //             edge_response: HashMap::new(),
+        //             id: self.get_node_meta_id(),
+        //             auxiliary_commands: HashMap::new(),
+        //             completed_edges: HashMap::new(),
+        //         },
+        //     );
+        // }
+        self.last_visited_node = Some(node.clone());
         // link previous
         self.link_previous(node);
     }
 
-    fn get_node_meta_id(&self) -> u16 {
-        self.nodes.len() as u16 + 1
+    fn get_node_meta_id(&mut self) -> u16 {
+        let mut last =* self.last_node_id.get_or_insert(self.nodes.len() as u16 + 1);
+        last += 1;
+        self.last_node_id.insert(last);
+        last
     }
     fn is_a_dangerous_edge(node: Rc<RefCell<Node>>, command: &String) -> bool {
         let resp = node.borrow().response();
@@ -656,37 +688,61 @@ impl MazeAnalyzer {
     fn get_next_edge(&mut self, node: Rc<RefCell<Node>>, max_times_visited: u16) -> Option<String> {
         if node.borrow().response().title == "Passage" {
             // TODO: delete this line
-            warn!("important debug point")
-        }
-        let global_inv = &self.inventory_global;
-        let mut n_meta= self .nodes .get_mut(&node.borrow().response())?;
-        while let Some(edge) = n_meta
-            .edges_to_visit
-            .pop()
-        {
-            if !n_meta
-                .visited_edges
-                .contains_key(&edge)
-                && !Self::is_a_dangerous_edge(node.clone(), &edge)
-                && !Self::is_looked_or_used_inventory(global_inv, &edge)
-            {
-                return Some(edge);
+            if node.borrow().response().message.contains("A dark passage leads further west.") {
+                warn!("important debug point");
+            }
+            if node.borrow().response().message.contains("You are likely to be eaten by a grue.") {
+                warn!("continue DANGER debug point");
             }
         }
+        let global_inv = &self.inventory_global;
+        let to_prev_node =  self.get_command_back_to_previous(node.clone());
+        let mut n_meta= self .nodes .get_mut(&node.borrow().response())?;
+        let mut edges_to_visit = n_meta.edges_to_visit.iter()
+            .filter(|e|!n_meta.visited_edges.contains_key(*e))
+            .filter(|e|!Self::is_a_dangerous_edge(node.clone(), e))
+            .filter(|e|!Self::is_looked_or_used_inventory(global_inv, e))
+            // Also exclude previous if it is completed
+            // .filter(|e| to_prev_node.clone().is_some_and(|p| p.eq(*e))) // It is better not to filter it here, rather than move it to visited after the pop operation
+            .collect::<Vec<_>>();
+        while let Some(edge) = edges_to_visit.pop()
+        {
+                if edge == "use lit lantern" || to_prev_node.as_ref().is_some_and(|p| p.eq(edge)) {
+                    // Just set it with low priority, to prevent using it
+                    // This prevents flipping 'lantern' to 'lit lantern' and using them in loop
+                    n_meta.visited_edges.insert(edge.clone(), u16::MAX/2);
+                    continue
+                }
+                return Some(edge.clone());
+        }
+        self.get_next_edge_least_visited_fallback(node, max_times_visited)
+    }
+
+    fn get_next_edge_least_visited_fallback(&mut self, node: Rc<RefCell<Node>>, max_times_visited: u16) -> Option<String> {
         trace!("all edges have been consumed. Checking second round to find the least consumed");
+        let n_meta= self .nodes .get(&node.borrow().response())?;
+        // And not visited for particular inventory version
         let last_visited_edge = n_meta.last_visited_edge.clone()?;
         let least_visited: Option<String> = n_meta
             .visited_edges
             .iter()
-            .filter(|(k, v)| {
-                (**v) < max_times_visited
-                    && matches!(CommandType::command_type(k), CommandType::Move(_))
-                && !k.as_str().eq(&last_visited_edge)
-                && !Self::is_a_dangerous_edge(node.clone(), k)
-            })
+            .filter(|(k, v)| { (**v) < max_times_visited })
+            .filter(|(k, _)| {matches!(CommandType::command_type(k), CommandType::Move(_))})
+            .filter(|(k, _)| { !k.as_str().eq(&last_visited_edge) })
+            .filter(|(k, _)| { !Self::is_a_dangerous_edge(node.clone(), k) })
+            .filter(|(k, _)| {self.get_completed_node_by_edge(k,node.clone()).is_none()})
             .min_by(|(_key_1, val_1), (_key_2, val_2)| (**val_1).cmp(*val_2))
             .map(|(k, _v)| k.clone());
         least_visited
+    }
+
+
+    fn get_completed_node_by_edge(&self, edge: &str, node: Rc<RefCell<Node>>) -> Option<Rc<ResponseParts>> {
+        let n_meta= self .nodes .get(&node.borrow().response())?;
+        let next_resp = n_meta.edge_2_response.get(edge).cloned()?;
+        let inv_hash = self.global_inventory_hash();
+        let completed_node = self.completed_nodes.get(&inv_hash)?.get(&next_resp).cloned();
+       completed_node
     }
     fn visit_edge(&mut self, node: Rc<RefCell<Node>>, command: &str) {
         if let Some(n_meta) = self.nodes.get_mut(&node.borrow().response()) {
@@ -694,8 +750,11 @@ impl MazeAnalyzer {
             let visits = n_meta.visited_edges.get(command).unwrap_or(&0) + 1;
             n_meta.visited_edges.insert(command.to_string(), visits);
             n_meta.last_visited_edge = Some(command.to_string());
-            if n_meta.edges_to_visit.is_empty() {
-                self.completed_nodes.insert(node.borrow().response());
+            //Complete node
+            if !n_meta.edges_to_visit.iter().any(|e| matches!(CommandType::command_type(e), CommandType::Move(_))) {
+                let inv_hash = self.global_inventory_hash();
+                 self.completed_nodes.entry(inv_hash).or_insert(HashSet::new()).insert(node.borrow().response());
+                // self.completed_nodes.insert(node.borrow().response());
             }
         }
     }
@@ -710,9 +769,11 @@ impl MazeAnalyzer {
         self.validate_steps_left(&node.borrow())?;
         self.visit_node(node.clone());
         const VISITS_LIMIT_PER_EDGE: u16 = 5;
-        self.enqueue_commands(node, VISITS_LIMIT_PER_EDGE)?;
+        self.enqueue_commands(node.clone(), VISITS_LIMIT_PER_EDGE)?;
         // We pop exactly 1 command, because new node will give other commands
         if let Some(cmd) = self.commands_queue.pop_front() {
+
+            self.visit_edge(node, &cmd);
             cmd.chars().for_each(|c| replay_buf.push_back(c));
             replay_buf.push_back('\n');
             self.last_command_num = self.commands_counter;

@@ -1276,7 +1276,7 @@ impl VM {
                 // exit earlier without reading the user input, if the autosolver is working
                 // It is needed here, before processing user input.
                 // Other invocation is in grab_input/store_command_to_history
-                if self.solver_response_hook().is_ok() {
+                if self.solver_response_hook().map_err(|e| {debug!("solver response hook returned with error: {}", e); e}).is_ok() {
                     return;
                 }
                 let mut buf: [u8; 1] = [0];
