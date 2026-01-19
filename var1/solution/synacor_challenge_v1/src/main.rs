@@ -16,14 +16,14 @@ fn main() {
         let mut c = Configuration::default();
         error!("Failed to parse configuration. Error: {}", e);
         warn!(
-                "Failed to parse configuration. Fallback to default value {:?}",
-                c
-            );
+            "Failed to parse configuration. Fallback to default value {:?}",
+            c
+        );
         if let Err(read_error) = c.read_in() {
             error!(
-                    "Failed to load the default configuration. Aborting execution. Error: {}",
-                    read_error
-                );
+                "Failed to load the default configuration. Aborting execution. Error: {}",
+                read_error
+            );
             std::process::exit(2);
         }
         c

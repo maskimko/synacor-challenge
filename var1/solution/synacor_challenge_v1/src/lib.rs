@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{fmt, fs};
 
 use crate::aux::Commander;
@@ -138,17 +138,33 @@ impl fmt::Debug for Data {
 }
 
 fn print_slash_command_help() {
-    eprintln!("*** Available slash '/' commands: ***");
-    eprintln!("/help - show this help");
-    eprintln!("/show_replay - show replay commands");
-    eprintln!("/show_state - show state of the VM");
-    eprintln!("/dump_state - save VM state information to file");
-    eprintln!("/dump_memory - save VM RAM to file");
-    eprintln!("/show_history - show commands history");
-    eprintln!("/save_history - save commands history to file");
-    eprintln!("/record_output - start output recording");
-    eprintln!("/solve [steps limit] - start automatic path search (Default steps limit is 100)");
-    eprintln!("/show_path - show the shortest path back to start");
+    eprintln!("{}", "*** Available slash '/' commands: ***".green());
+    eprintln!("{:15} - {}", "/help".yellow(), "show this help");
+    eprintln!("{:15} - {}", "/show_replay".yellow(), "show replay commands");
+    eprintln!("{:15} - {}", "/show_state".yellow(), "show state of the VM");
+    eprintln!(
+        "{:15} - {}",
+        "/dump_state".yellow(), "save VM state information to file"
+    );
+    eprintln!("{:15} - {}", "/dump_memory".yellow(), "save VM RAM to file");
+    eprintln!("{:15} - {}", "/show_history".yellow(), "show commands history");
+    eprintln!(
+        "{:15} - {}",
+        "/save_history".yellow(), "save commands history to file"
+    );
+    eprintln!("{:15} - {}", "/record_output".yellow(), "start output recording");
+    eprintln!(
+        "{:15} - {}",
+        "/solve".yellow(), "steps limit] - start automatic path search (Default steps limit is 100)"
+    );
+    eprintln!(
+        "{:15} - {}",
+        "/show_path".yellow(), "show the shortest path back to start"
+    );
+    eprintln!(
+        "{:15} - {}",
+        "/dump_dot".yellow(), "dump visited noded graph in the .dot format to file"
+    );
 }
 
 /// This function composes u16 number from little endian byte pair of low byte and high byte
@@ -382,7 +398,7 @@ impl<'b> aux::Commander<'b> for VM {
                         }
                     }
                     "/solve" => {
-                        println!("searching path...");
+                        eprintln!("searching path...");
                         self.maze_analyzer.solve(maze_analyzer::ALLOWED_STEPS);
                     }
                     solve if solve.starts_with("/solve ") => {
@@ -391,17 +407,41 @@ impl<'b> aux::Commander<'b> for VM {
                             .unwrap_or(&format!("{}", maze_analyzer::ALLOWED_STEPS))
                             .to_owned()
                             .parse::<u16>()?;
-                        println!("searching path...");
+                        eprintln!("searching path...");
                         self.maze_analyzer.solve(steps);
-                    },
+                    }
                     "/show_path" => {
                         let path = self.maze_analyzer.get_path_back();
                         if path.is_empty() {
-                             println!("no path back was recorded yet. First you need to advance in the maze"); }
-                           else {
-                                let path_back  = path.iter().rev().map(|(n, msg, cmd)| format!("{:03}) {} {}", n.to_string().green(), msg.yellow(), cmd.clone().and_then(|c| Some(format!("Command: {}", c).white())).unwrap_or("".black()))).collect::<Vec<String>>().join("\n");
-                                println!("{}", path_back); }
+                            eprintln!(
+                                "no path back was recorded yet. First you need to advance in the maze"
+                            );
+                        } else {
+                            let path_back = path
+                                .iter()
+                                .rev()
+                                .map(|(n, msg, cmd)| {
+                                    format!(
+                                        "{:03}) {} {}",
+                                        n.to_string().green(),
+                                        msg.yellow(),
+                                        cmd.clone()
+                                            .and_then(|c| Some(format!("Command: {}", c).white()))
+                                            .unwrap_or("".black())
+                                    )
+                                })
+                                .collect::<Vec<String>>()
+                                .join("\n");
+                            eprintln!("{}", path_back);
+                        }
                     }
+                    "/dump_dot" => {
+                        let dot_graph_file = PathBuf::from("maze.dot");
+                        match self.dump_dot(&dot_graph_file) {
+                            Err(st_err) => eprintln!("{}", st_err),
+                            Ok(()) => eprintln!("graph has been successfully saved to {}", dot_graph_file.display()),
+                        }
+                    },
                     user_command => {
                         return Err(format!("unsupported slash command {}", user_command).into());
                     }
@@ -457,9 +497,31 @@ impl VM {
         state.push_str(&self.maze_analyzer.get_maze_analyzer_state(1));
         state.push_str(&format!("{}\n", "=".repeat(PRINT_WIDTH)));
         state.push_str("^^^        Shortest path back             ^^^\n");
-        state.push_str(&self.maze_analyzer.get_path_back().iter().map(|(n, m, c)| format!("{:03} {} Command: {}",n, m, c.clone().unwrap_or("N/A".to_string()))).collect::<Vec<String>>().join("\n"));
+        state.push_str(
+            &self
+                .maze_analyzer
+                .get_path_back()
+                .iter()
+                .map(|(n, m, c)| {
+                    format!(
+                        "{:03} {} Command: {}",
+                        n,
+                        m,
+                        c.clone().unwrap_or("N/A".to_string())
+                    )
+                })
+                .collect::<Vec<String>>()
+                .join("\n"),
+        );
         state.push_str(&format!("\n{}\n", "^".repeat(PRINT_WIDTH)));
         state
+    }
+
+    fn dump_dot(&self, dot_graph_file: &Path) -> Result<(), Box<dyn Error>> {
+        trace!("dumping graph to {}", dot_graph_file.display());
+        let content  = self.maze_analyzer.export_dot_graph()?;
+            std::fs::write(dot_graph_file, content)?;
+        Ok(())
     }
     fn get_registers_info(&self, indent: usize) -> String {
         let mut registers = String::new();
@@ -1488,7 +1550,6 @@ impl VM {
 
                                 unimplemented!("main loop is not implemented yet");
                     */
-                    // TODO: Probably it worth to add fuctions for each operation...
                     self.noop();
                 }
                 instruction => panic!("got invalid instruction {}", instruction),
