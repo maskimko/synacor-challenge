@@ -12,6 +12,7 @@ use std::ops::{Deref, Index};
 use std::rc::{Rc, Weak};
 
 use std::hash::DefaultHasher;
+use colored::Colorize;
 
 type OptionalNode = Option<Rc<RefCell<Node>>>;
 
@@ -343,6 +344,39 @@ impl MazeAnalyzer {
         // }
         self.replace_head(new_response)?;
         Ok(())
+    }
+
+    // fn calculate_path_back(&self) -> Option<Vec<(u16, String, String)>> {
+    //     let mut path: Vec<(u16,String, String)> = vec![];
+    //     let mut current = self.head.clone();
+    //     while let Some(node) = current {
+    //         let previous = node.borrow().previous.clone()?;
+    //         let prev_meta = self.nodes.get(&previous.borrow().response())?;
+    //         let causing_edge = prev_meta.response_2_edge.get(&node.borrow().response())?;
+    //         path.push((node.borrow().id, node.borrow().response().message, causing_edge.clone()));
+    //         current = node.borrow().previous.clone();
+    //         let n_meta = self.nodes.get(&node.borrow().response());
+    //     }
+    //     Some(path)
+    // }
+    pub fn get_path_back(&self) -> Vec<(u16, String, String)> {
+        let mut path: Vec<(u16,String, String)> = vec![];
+        let mut current = self.head.clone();
+        while let Some(node) = current {
+             match node.borrow().previous.clone() {
+                Some(prev) => {
+                    let prev_meta = self.nodes.get(&prev.borrow().response()).expect("previous meta is absent, however the previous node exists");
+                    let causing_edge = prev_meta.response_2_edge.get(&node.borrow().response()).expect("no registered edge from previous node to current one");
+                    path.push((node.borrow().id, node.borrow().response().message.clone(), causing_edge.clone()));
+                }, 
+                None => {
+                    path.push((node.borrow().id, node.borrow().response().message.clone(), "".to_string()));
+                }
+            }
+            current = node.borrow().previous.clone();
+            let n_meta = self.nodes.get(&node.borrow().response());
+        }
+       path 
     }
     fn modify_prev_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
         if self.response_buffer.is_empty() || command.is_none() {
@@ -689,9 +723,7 @@ impl MazeAnalyzer {
         {
             return false;
         }
-        if resp
-            .message
-            .contains("You are likely to be eaten by a grue.")
+        if resp .message .contains("You are likely to be eaten by a grue.")
             && command.contains("continue")
         {
             return true;

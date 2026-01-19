@@ -146,6 +146,7 @@ fn print_slash_command_help() {
     eprintln!("/save_history - save commands history to file");
     eprintln!("/record_output - start output recording");
     eprintln!("/solve [steps limit] - start automatic path search (Default steps limit is 100)");
+    eprintln!("/show_path - show the shortest path back to start");
 }
 
 /// This function composes u16 number from little endian byte pair of low byte and high byte
@@ -390,6 +391,14 @@ impl<'b> aux::Commander<'b> for VM {
                             .parse::<u16>()?;
                         println!("searching path...");
                         self.maze_analyzer.solve(steps);
+                    },
+                    "/show_path" => {
+                        let path = self.maze_analyzer.get_path_back();
+                        if path.is_empty() {
+                             println!("no path back was recorded yet. First you need to advance in the maze"); }
+                           else {
+                                let path_back  = path.iter().rev().map(|(n, msg, cmd)| if cmd.is_empty() { format!("{:03}) {}", n.to_string().green(), msg.yellow()) } else { format!("{:03}) {} {}", n.to_string().green(), msg.yellow(), format!("Command: {}", cmd).white())}).collect::<Vec<String>>().join("\n^ ⬆️ ^\n");
+                                println!("{}", path_back); }
                     }
                     user_command => {
                         return Err(format!("unsupported slash command {}", user_command).into());
