@@ -713,7 +713,7 @@ impl MazeAnalyzer {
         *last += 1;
         *last
     }
-    fn is_a_dangerous_edge(node: Rc<RefCell<Node>>, command: &String) -> bool {
+    fn is_a_dangerous_edge(node: Rc<RefCell<Node>>, command: &String, prev_command: Option<String>) -> bool {
         let resp = node.borrow().response();
         // No fear with lit lantern
         if node
@@ -724,6 +724,7 @@ impl MazeAnalyzer {
         {
             return false;
         }
+        // Check for grues
         if resp .message .contains("You are likely to be eaten by a grue.")
             && command.contains("continue")
         {
@@ -736,6 +737,13 @@ impl MazeAnalyzer {
         {
             return true;
         }
+        if resp
+            .message
+            .contains("you think you hear a Grue")
+        {
+            return prev_command.map(|p| p.eq(command)).unwrap_or(false);
+        }
+
         false
     }
 
@@ -781,12 +789,13 @@ impl MazeAnalyzer {
         }
         let global_inv = &self.inventory_global;
         let to_prev_node = self.get_command_back_to_previous(node.clone());
+        let original_edge = node.borrow().previous.clone().map(|prev| prev.borrow().response()).map(|p_resp| self.nodes.get(&p_resp)).map(|p| p.map(|op| op.last_visited_edge.clone())).clone().flatten().flatten();
         let mut n_meta = self.nodes.get_mut(&node.borrow().response())?;
         let mut edges_to_visit = n_meta
             .edges_to_visit
             .iter()
             .filter(|e| !n_meta.visited_edges.contains_key(*e))
-            .filter(|e| !Self::is_a_dangerous_edge(node.clone(), e))
+            .filter(|e| !Self::is_a_dangerous_edge(node.clone(), e, original_edge.clone()))
             .filter(|e| !Self::is_looked_or_used_inventory(global_inv, e))
             // Also exclude previous if it is completed
             // .filter(|e| to_prev_node.clone().is_some_and(|p| p.eq(*e))) // It is better not to filter it here, rather than move it to visited after the pop operation
@@ -826,7 +835,7 @@ impl MazeAnalyzer {
             .filter(|(k, v)| (**v) < max_times_visited)
             .filter(|(k, _)| matches!(CommandType::command_type(k), CommandType::Move(_)))
             .filter(|(k, _)| !k.as_str().eq(&last_visited_edge))
-            .filter(|(k, _)| !Self::is_a_dangerous_edge(node.clone(), k))
+            .filter(|(k, _)| !Self::is_a_dangerous_edge(node.clone(), k, Some(last_visited_edge.clone())))
             .filter(|(k, _)| self.get_completed_node_by_edge(k, node.clone()).is_none())
             .min_by(|(_key_1, val_1), (_key_2, val_2)| (**val_1).cmp(*val_2))
             .map(|(k, _v)| k.clone());

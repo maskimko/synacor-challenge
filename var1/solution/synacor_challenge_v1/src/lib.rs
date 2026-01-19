@@ -397,7 +397,7 @@ impl<'b> aux::Commander<'b> for VM {
                         if path.is_empty() {
                              println!("no path back was recorded yet. First you need to advance in the maze"); }
                            else {
-                                let path_back  = path.iter().rev().map(|(n, msg, cmd)| format!("{:03}) {} {}", n.to_string().green(), msg.yellow(), cmd.clone().and_then(|c| Some(format!("Command: {}", c).white())).unwrap_or("".black()))).collect::<Vec<String>>().join("\n^ ⬆️ ^\n");
+                                let path_back  = path.iter().rev().map(|(n, msg, cmd)| format!("{:03}) {} {}", n.to_string().green(), msg.yellow(), cmd.clone().and_then(|c| Some(format!("Command: {}", c).white())).unwrap_or("".black()))).collect::<Vec<String>>().join("\n");
                                 println!("{}", path_back); }
                     }
                     user_command => {
@@ -454,6 +454,9 @@ impl VM {
         ));
         state.push_str(&self.maze_analyzer.get_maze_analyzer_state(1));
         state.push_str(&format!("{}\n", "=".repeat(PRINT_WIDTH)));
+        state.push_str("^^^        Shortest path back             ^^^\n");
+        state.push_str(&self.maze_analyzer.get_path_back().iter().map(|(n, m, c)| format!("{:03} {} Command: {}",n, m, c.clone().unwrap_or("N/A".to_string()))).collect::<Vec<String>>().join("\n"));
+        state.push_str(&format!("\n{}\n", "^".repeat(PRINT_WIDTH)));
         state
     }
     fn get_registers_info(&self, indent: usize) -> String {
