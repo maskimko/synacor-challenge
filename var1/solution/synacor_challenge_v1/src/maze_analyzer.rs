@@ -797,8 +797,6 @@ impl MazeAnalyzer {
             .filter(|e| !n_meta.visited_edges.contains_key(*e))
             .filter(|e| !Self::is_a_dangerous_edge(node.clone(), e, original_edge.clone()))
             .filter(|e| !Self::is_looked_or_used_inventory(global_inv, e))
-            // Also exclude previous if it is completed
-            // .filter(|e| to_prev_node.clone().is_some_and(|p| p.eq(*e))) // It is better not to filter it here, rather than move it to visited after the pop operation
             .collect::<Vec<_>>();
         while let Some(edge) = edges_to_visit.pop() {
             if edge.contains("forward") {
@@ -869,13 +867,23 @@ impl MazeAnalyzer {
                 .iter()
                 .any(|e| matches!(CommandType::command_type(e), CommandType::Move(_)))
             {
-                let inv_hash = self.global_inventory_hash();
-                self.completed_nodes
-                    .entry(inv_hash)
-                    .or_insert(HashSet::new())
-                    .insert(node.borrow().response());
-                // self.completed_nodes.insert(node.borrow().response());
+                self.complete_node(node.clone());
             }
+        }
+    }
+
+    fn previous_is_accessible(&self, node: Rc<RefCell<Node>>) -> bool {
+        node.borrow().response().exits.len() > 1 && self.get_command_back_to_previous(node).is_some()
+    }
+
+    fn complete_node(&mut self, node: Rc<RefCell<Node>>) {
+        let inv_hash = self.global_inventory_hash();
+        let prev_is_completed = node.borrow().previous.clone().map(|pr| self.completed_nodes.get(&inv_hash).map(|completed| completed.contains(&pr.borrow().response()) )).flatten();
+        if prev_is_completed.unwrap_or(false) || !self.previous_is_accessible(node.clone()) {
+            self.completed_nodes
+                .entry(inv_hash)
+                .or_insert(HashSet::new())
+                .insert(node.borrow().response());
         }
     }
 
