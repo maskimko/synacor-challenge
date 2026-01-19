@@ -359,24 +359,25 @@ impl MazeAnalyzer {
     //     }
     //     Some(path)
     // }
-    pub fn get_path_back(&self) -> Vec<(u16, String, String)> {
-        let mut path: Vec<(u16,String, String)> = vec![];
+    pub fn get_path_back(&self) -> Vec<(u16, String, Option<String>)> {
+        let mut path: Vec<(u16,String, Option<String>)> = vec![];
         let mut current = self.head.clone();
+        let mut cmd : Option<String> = None;
         while let Some(node) = current {
              match node.borrow().previous.clone() {
                 Some(prev) => {
                     let prev_meta = self.nodes.get(&prev.borrow().response()).expect("previous meta is absent, however the previous node exists");
-                    let causing_edge = prev_meta.response_2_edge.get(&node.borrow().response()).expect("no registered edge from previous node to current one");
-                    path.push((node.borrow().id, node.borrow().response().message.clone(), causing_edge.clone()));
-                }, 
+                    let causing_edge = prev_meta.response_2_edge.get(&node.borrow().response()).cloned();
+                    path.push((node.borrow().id, node.borrow().response().message.clone(), cmd.clone()));
+                    cmd = causing_edge;
+                },
                 None => {
-                    path.push((node.borrow().id, node.borrow().response().message.clone(), "".to_string()));
+                    path.push((node.borrow().id, node.borrow().response().message.clone(), cmd.clone()));
                 }
             }
             current = node.borrow().previous.clone();
-            let n_meta = self.nodes.get(&node.borrow().response());
         }
-       path 
+       path
     }
     fn modify_prev_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
         if self.response_buffer.is_empty() || command.is_none() {

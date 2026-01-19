@@ -397,7 +397,7 @@ impl<'b> aux::Commander<'b> for VM {
                         if path.is_empty() {
                              println!("no path back was recorded yet. First you need to advance in the maze"); }
                            else {
-                                let path_back  = path.iter().rev().map(|(n, msg, cmd)| if cmd.is_empty() { format!("{:03}) {}", n.to_string().green(), msg.yellow()) } else { format!("{:03}) {} {}", n.to_string().green(), msg.yellow(), format!("Command: {}", cmd).white())}).collect::<Vec<String>>().join("\n^ ⬆️ ^\n");
+                                let path_back  = path.iter().rev().map(|(n, msg, cmd)| format!("{:03}) {} {}", n.to_string().green(), msg.yellow(), cmd.clone().and_then(|c| Some(format!("Command: {}", c).white())).unwrap_or("".black()))).collect::<Vec<String>>().join("\n^ ⬆️ ^\n");
                                 println!("{}", path_back); }
                     }
                     user_command => {
