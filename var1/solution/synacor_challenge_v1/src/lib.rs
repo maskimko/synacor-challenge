@@ -411,7 +411,7 @@ impl<'b> aux::Commander<'b> for VM {
                         self.maze_analyzer.solve(steps);
                     }
                     "/show_path" => {
-                        let path = self.maze_analyzer.get_path_back();
+                       let path = self.maze_analyzer.get_path_back();
                         if path.is_empty() {
                             eprintln!(
                                 "no path back was recorded yet. First you need to advance in the maze"
@@ -1202,11 +1202,6 @@ impl VM {
                 self.store_command_to_history(command);
             }
         }
-        // let do_save: bool = self.process_slash_command(&command)?;
-        // self.solver_command_hook(&command)?;
-        // if do_save {
-        //     self.store_command_to_history(command);
-        // }
         Ok(do_jump)
     }
     // returns false if command is not stored
@@ -1266,7 +1261,7 @@ impl VM {
             // Perform write
             if let Some(ref mut bw) = self.output_writer {
                 match bw.write(&[c as u8]) {
-                    Ok(count) => trace!("wrote {} bytes to the outout buffer", count),
+                    Ok(count) => trace!("wrote {} bytes to the output buffer", count),
                     Err(buf_e) => {
                         error!(
                             "failed to write character to the output recording buffer. Error: {} Recording stopped",
@@ -1281,13 +1276,14 @@ impl VM {
                 }
             }
         }
-        if analyze {
-            self.maze_analyzer.push(c);
-        }
+        self.maze_analyzer.push(c);
+        // if analyze {
+        //     self.maze_analyzer.push(c);
+        // }
     }
     fn solver_command_hook(&mut self, command: CommandType) -> Result<(), Box<dyn Error>> {
+        self.maze_analyzer.dispatch_response(Some(command))?;
         if self.maze_analyzer.is_rambling() {
-            self.maze_analyzer.dispatch_response(Some(command))?;
             // This will populate the replay buffer
             self.maze_analyzer.ramble(&mut self.replay_buffer);
         }

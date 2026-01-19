@@ -257,59 +257,99 @@ impl MazeAnalyzer {
         }
         Ok(())
     }
-    fn add_inventory_response(&mut self, command: CommandType) -> Result<(), Box<dyn Error>> {
+    fn add_inventory_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
         if self.response_buffer.is_empty() {
             return Ok(());
         }
         let oan: OutputParser = OutputParser::new(self.response_buffer.as_str());
         let resp_parts = oan.parse()?;
-        let head = self.head.clone().ok_or("no head")?;
-        let head_response = head.borrow().response();
+        let is_start_of_graph = self.head.is_none();
         // Visit edge is not needed here, because no I visit is when issue it to the replay buffer.
         // self.visit_edge(head.clone(), command.to_string().as_str());
+        // TODO: visit node here, because then I can register graph nodes even without running the solver.
 
-        let mut n_meta = self
-            .nodes
-            .remove(&head.borrow().response())
-            .ok_or::<String>("no node metadata".into())?;
+
 
         match command.clone() {
-            CommandType::InventoryTake(item) => {
+            Some(CommandType::InventoryTake(item)) => {
                 debug!("taking {} to inventory", item);
+                let head = self.head.clone().ok_or("no head")?;
+                let head_response = head.borrow().response();
                 let mut inventory = head_response.inventory.clone();
                 let mut things = head_response.things_of_interest.clone();
                 things.retain(|i| !i.eq(&item));
                 inventory.push(item);
                 self.update_inventory(head.clone(), inventory, Some(things))?;
+                self.set_aux_commands(resp_parts.pretext, command);
                 self.inventory_needs_update = true;
             }
-            CommandType::InventoryDrop(item) => {
+            Some(CommandType::InventoryDrop(item)) => {
                 debug!("droppoing {} from inventory", item);
+                let head = self.head.clone().ok_or("no head")?;
                 let mut inventory = head.borrow().response().inventory.clone();
                 inventory.retain(|i| !i.eq(&item));
                 self.update_inventory(head.clone(), inventory, None)?;
+                self.set_aux_commands(resp_parts.pretext, command);
                 self.inventory_needs_update = true;
             }
-            CommandType::InventoryUse(item) => {
+            Some(CommandType::InventoryUse(item)) => {
                 debug!("using {} from inventory", item);
+                let head = self.head.clone().ok_or("no head")?;
                 (*self.inventory_global.entry(item).or_insert((0, 0))).0 += 1;
                 self.inventory_needs_update = true;
+                self.set_aux_commands(resp_parts.pretext, command);
             }
-            CommandType::InventoryLook(item) => {
+            Some(CommandType::InventoryLook(item)) => {
                 debug!("using {} from inventory", item);
+                let head = self.head.clone().ok_or("no head")?;
                 (*self.inventory_global.entry(item).or_insert((0, 0))).1 += 1;
+                self.set_aux_commands(resp_parts.pretext, command);
             }
-            CommandType::Inventory => {
+            Some(CommandType::Inventory) => {
                 debug!("updating inventory");
-                let mut inventory = head.borrow().response().inventory.clone();
+                let head = self.head.clone().ok_or("no head")?;
                 self.update_inventory(head.clone(), resp_parts.inventory, None)?;
+                self.set_aux_commands(resp_parts.pretext, command);
                 self.inventory_needs_update = false;
             }
-            _ => panic!("never should be called"),
+            None | Some(CommandType::Move(_)) => {
+                // debug!("moving {}", destination);
+                debug!("moving to next node");
+                let node_meta_id = self
+                    .nodes
+                    .get(&resp_parts)
+                    .map(|m| m.id)
+                    .unwrap_or(self.get_node_meta_id());
+                let min_steps = self
+                    .nodes
+                    .get(&resp_parts)
+                    .map(|m| m.min_steps)
+                    .unwrap_or(self.head.clone().map(|h| h.borrow().steps).unwrap_or(0));
+                let previous: OptionalNode = self
+                    .nodes
+                    .get(&resp_parts)
+                    .map(|m| m.origin.clone())
+                    .unwrap_or(self.head.clone());
+                let from = self.head.clone().map(|r| Rc::downgrade(&r));
+                let new_node = Node {
+                    previous,
+                    id: node_meta_id,
+                    response: Rc::new(resp_parts),
+                    steps: min_steps,
+                    come_from: from,
+                };
+                self.head = Some(Rc::new(RefCell::new(new_node))).clone();
+                if is_start_of_graph {
+                    self.first = self.head.clone();
+                }
+            }
+            Some(_) => panic!("never should be called"),
         }
-        self.nodes
-            .insert(self.head.clone().unwrap().borrow().response(), n_meta);
-        self.set_aux_commands(resp_parts.pretext, Some(command));
+        let head = self.head.clone().ok_or("no head")?;
+        let visits =self.visit_node(head)?;
+        debug!("node has {} visits", visits);
+        // let mut n_meta = self .nodes .remove(&head.borrow().response()) .ok_or::<String>("no node metadata".into())?;
+        // self.nodes .insert(self.head.clone().unwrap().borrow().response(), n_meta);
         self.flush();
         self.commands_counter += 1;
         Ok(())
@@ -412,10 +452,13 @@ impl MazeAnalyzer {
                     | CommandType::InventoryUse(_)
                     | CommandType::InventoryTake(_)
                     | CommandType::Inventory
-                    | CommandType::InventoryDrop(_) => self.add_inventory_response(cmd),
+                    | CommandType::InventoryDrop(_) => {
+                        debug!("dispatching command");
+                        self.add_inventory_response(Some(cmd))
+                    },
                     CommandType::Move(edge) => {
                         debug!("dispatching {} command", edge);
-                        self.add_response(Some(cmd))
+                        self.add_inventory_response(Some(cmd))
                     }
                     CommandType::Slash(_) => Err("slash command  should not be dispatched".into()),
                     CommandType::Empty => {
@@ -428,51 +471,51 @@ impl MazeAnalyzer {
             None => {
                 //This usually means that this user's first command was /solve
                 debug!("dispatching to save initial response");
-                self.add_response(None)
+                self.add_inventory_response(None)
             }
         }
     }
     /// This function adds response from the inner resonse buffer
-    fn add_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
-        // TODO: Combine methods with add_inventory_response
-        if self.response_buffer.is_empty() {
-            return Ok(());
-        }
-        let oan: OutputParser = OutputParser::new(self.response_buffer.as_str());
-        let is_start_of_graph = self.head.is_none();
-        let resp_parts = oan.parse()?;
-        // Assign ID if known
-        let node_meta_id = self
-            .nodes
-            .get(&resp_parts)
-            .map(|m| m.id)
-            .unwrap_or(self.get_node_meta_id());
-        let min_steps = self
-            .nodes
-            .get(&resp_parts)
-            .map(|m| m.min_steps)
-            .unwrap_or(self.head.clone().map(|h| h.borrow().steps).unwrap_or(0));
-        let previous: OptionalNode = self
-            .nodes
-            .get(&resp_parts)
-            .map(|m| m.origin.clone())
-            .unwrap_or(self.head.clone());
-        let from = self.head.clone().map(|r| Rc::downgrade(&r));
-        let new_node = Node {
-            previous,
-            id: node_meta_id,
-            response: Rc::new(resp_parts),
-            steps: min_steps,
-            come_from: from,
-        };
-        self.head = Some(Rc::new(RefCell::new(new_node))).clone();
-        if is_start_of_graph {
-            self.first = self.head.clone();
-        }
-        self.flush();
-        self.commands_counter += 1;
-        Ok(())
-    }
+    // fn add_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
+    //     // TODO: Combine methods with add_inventory_response
+    //     if self.response_buffer.is_empty() {
+    //         return Ok(());
+    //     }
+    //     let oan: OutputParser = OutputParser::new(self.response_buffer.as_str());
+    //     let is_start_of_graph = self.head.is_none();
+    //     let resp_parts = oan.parse()?;
+    //     // Assign ID if known
+    //     let node_meta_id = self
+    //         .nodes
+    //         .get(&resp_parts)
+    //         .map(|m| m.id)
+    //         .unwrap_or(self.get_node_meta_id());
+    //     let min_steps = self
+    //         .nodes
+    //         .get(&resp_parts)
+    //         .map(|m| m.min_steps)
+    //         .unwrap_or(self.head.clone().map(|h| h.borrow().steps).unwrap_or(0));
+    //     let previous: OptionalNode = self
+    //         .nodes
+    //         .get(&resp_parts)
+    //         .map(|m| m.origin.clone())
+    //         .unwrap_or(self.head.clone());
+    //     let from = self.head.clone().map(|r| Rc::downgrade(&r));
+    //     let new_node = Node {
+    //         previous,
+    //         id: node_meta_id,
+    //         response: Rc::new(resp_parts),
+    //         steps: min_steps,
+    //         come_from: from,
+    //     };
+    //     self.head = Some(Rc::new(RefCell::new(new_node))).clone();
+    //     if is_start_of_graph {
+    //         self.first = self.head.clone();
+    //     }
+    //     self.flush();
+    //     self.commands_counter += 1;
+    //     Ok(())
+    // }
 
     pub fn push(&mut self, c: char) {
         self.response_buffer.push(c);
