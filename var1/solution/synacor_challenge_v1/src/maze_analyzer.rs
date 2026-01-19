@@ -13,6 +13,8 @@ use std::rc::{Rc, Weak};
 
 use std::hash::DefaultHasher;
 use colored::Colorize;
+use crate::dot_graph;
+use crate::dot_graph::DotGraphNode;
 
 type OptionalNode = Option<Rc<RefCell<Node>>>;
 
@@ -745,6 +747,28 @@ impl MazeAnalyzer {
         }
 
         false
+    }
+
+    fn export_dot_graph(&self) -> Result<String, String> {
+        let mut graph = dot_graph::DotGraph::new();
+        let mut mapping: HashMap<Rc<ResponseParts>, DotGraphNode> = HashMap::new();
+        self.nodes.iter().for_each(|(node, meta)| {
+            let mut gn = dot_graph::DotGraphNode::new(meta.id, node.message.clone());
+            gn = graph.add_node(gn);
+            mapping.insert(node.clone(), gn);
+        });
+        self.nodes.iter().for_each(|(node, meta)| {
+            meta.response_2_edge.iter().for_each(|(resp, cmd)| {
+                let first  = mapping.get(node);
+                let second = mapping.get(resp);
+                if first.is_some() && second.is_some() {
+                    graph.add_edge(&first.clone().unwrap(), &second.clone().unwrap(), cmd.clone());
+                } else {
+                    warn!("cannot add to graph None value nodes");
+                }
+            })
+        });
+        Ok(graph.dot())
     }
 
     fn is_looked_or_used_inventory(

@@ -16,6 +16,8 @@ pub mod config;
 mod maze_analyzer;
 mod output_parser;
 
+mod dot_graph;
+
 //const MAX: u16 = 32768; // The same as 1 << 15
 const MAX: u16 = 1 << 15;
 const PRINT_WIDTH: usize = 44;
