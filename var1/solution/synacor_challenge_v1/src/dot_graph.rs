@@ -38,14 +38,14 @@ impl DotGraphNode {
 
     fn dot_display(&self) -> String {
         let inventory: String =  if self.inventory.is_empty() {
-            "Inventory is empty".to_string()
+            "<TD COLOR=\"#a0522d\"><I>Inventory is empty</I></TD>".to_string()
         } else {
-            format!("Inventory: [{}]", self.inventory.join(", "))
+            format!("<TD ALIGN=\"LEFT\"><B>Inventory:</B></TD>{}", self.inventory.iter().map(|s| format!("<TD ALIGN=\"CENTER\">{}</TD>", s)).collect::<String>())
         };
-        format!(r#"shape="rect" label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0">
+        format!(r#"shape="rect" style="rounded" label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0">
                 <TR><TD ALIGN="LEFT"><B>[{}]</B></TD><TD ALIGN="LEFT"><B>{}</B></TD><TD ALIGN="RIGHT"><I>Steps: {}</I></TD></TR>
                 <HR/>
-                <TR><TD ALIGN="LEFT" COLOR="blue"><I>{}</I></TD></TR>
+                <TR>{}</TR>
                 <HR/>
                 <TR><TD ALIGN="LEFT">{}</TD></TR>
             </TABLE>>"#, self.id, self.label, self.steps, inventory,self.message.replace('\n', "<BR/>"))
