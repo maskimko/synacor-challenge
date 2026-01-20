@@ -8,16 +8,21 @@ pub struct DotGraphNode {
     pub message: String,
     pub id: u16,
     pub label: String,
+    inventory: Vec<String>,
+    steps: u16,
+
     index: Option<NodeIndex>,
 }
 
 impl DotGraphNode {
-    pub fn new(id: u16, title: String, message: String) -> DotGraphNode {
+    pub fn new(id: u16, title: String, message: String, steps: u16, inventory: &[&str]) -> DotGraphNode {
         DotGraphNode {
             id,
             message,
+            steps,
             label: title,
             index: None,
+            inventory: inventory.iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -32,11 +37,18 @@ impl DotGraphNode {
     }
 
     fn dot_display(&self) -> String {
+        let inventory: String =  if self.inventory.is_empty() {
+            "Inventory is empty".to_string()
+        } else {
+            format!("Inventory: [{}]", self.inventory.join(", "))
+        };
         format!(r#"shape="rect" label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0">
-                <TR><TD><B>[{}] {}</B></TD></TR>
+                <TR><TD ALIGN="LEFT"><B>[{}]</B></TD><TD ALIGN="LEFT"><B>{}</B></TD><TD ALIGN="RIGHT"><I>Steps: {}</I></TD></TR>
+                <HR/>
+                <TR><TD ALIGN="LEFT" COLOR="blue"><I>{}</I></TD></TR>
                 <HR/>
                 <TR><TD ALIGN="LEFT">{}</TD></TR>
-            </TABLE>>"#, self.id, self.label, self.message.replace('\n', "<BR/>"))
+            </TABLE>>"#, self.id, self.label, self.steps, inventory,self.message.replace('\n', "<BR/>"))
     }
 }
 impl fmt::Display for DotGraphNode {

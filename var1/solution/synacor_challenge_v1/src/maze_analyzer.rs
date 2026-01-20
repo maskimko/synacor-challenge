@@ -874,7 +874,7 @@ debug!("adding empty command case");
         let mut graph = dot_graph::DotGraph::new();
         let mut mapping: HashMap<Rc<ResponseParts>, DotGraphNode> = HashMap::new();
         self.nodes.iter().for_each(|(node, meta)| {
-            let mut gn = dot_graph::DotGraphNode::new(meta.id, node.title.clone(), node.message.clone());
+            let mut gn = dot_graph::DotGraphNode::new(meta.id, node.title.clone(), node.message.clone(), meta.min_steps, node.inventory.iter().map(String::as_str).collect::<Vec<&str>>().as_slice());
             gn = graph.add_node(gn);
             mapping.insert(node.clone(), gn);
         });
