@@ -1,7 +1,7 @@
 use log::{debug, error, trace};
 use regex::Regex;
-use std::{error::Error, fmt::Display};
 use std::collections::HashMap;
+use std::{error::Error, fmt::Display};
 
 pub struct OutputParser<'a> {
     response: &'a str,

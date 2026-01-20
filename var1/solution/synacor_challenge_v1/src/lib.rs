@@ -1,11 +1,11 @@
 use colored::Colorize;
-use log::{debug, error, info, trace, Level};
+use log::{Level, debug, error, info, trace};
 use log::{log_enabled, warn};
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{fmt, fs};
 
 use crate::aux::Commander;
@@ -15,6 +15,8 @@ mod aux;
 pub mod config;
 mod maze_analyzer;
 mod output_parser;
+
+mod dot_graph;
 
 //const MAX: u16 = 32768; // The same as 1 << 15
 const MAX: u16 = 1 << 15;
@@ -136,16 +138,33 @@ impl fmt::Debug for Data {
 }
 
 fn print_slash_command_help() {
-    eprintln!("*** Available slash '/' commands: ***");
-    eprintln!("/help - show this help");
-    eprintln!("/show_replay - show replay commands");
-    eprintln!("/show_state - show state of the VM");
-    eprintln!("/dump_state - save VM state information to file");
-    eprintln!("/dump_memory - save VM RAM to file");
-    eprintln!("/show_history - show commands history");
-    eprintln!("/save_history - save commands history to file");
-    eprintln!("/record_output - start output recording");
-    eprintln!("/solve [steps limit] - start automatic path search (Default steps limit is 100)");
+    eprintln!("{}", "*** Available slash '/' commands: ***".green());
+    eprintln!("{:15} - {}", "/help".yellow(), "show this help");
+    eprintln!("{:15} - {}", "/show_replay".yellow(), "show replay commands");
+    eprintln!("{:15} - {}", "/show_state".yellow(), "show state of the VM");
+    eprintln!(
+        "{:15} - {}",
+        "/dump_state".yellow(), "save VM state information to file"
+    );
+    eprintln!("{:15} - {}", "/dump_memory".yellow(), "save VM RAM to file");
+    eprintln!("{:15} - {}", "/show_history".yellow(), "show commands history");
+    eprintln!(
+        "{:15} - {}",
+        "/save_history".yellow(), "save commands history to file"
+    );
+    eprintln!("{:15} - {}", "/record_output".yellow(), "start output recording");
+    eprintln!(
+        "{:15} - {}",
+        "/solve".yellow(), "steps limit] - start automatic path search (Default steps limit is 100)"
+    );
+    eprintln!(
+        "{:15} - {}",
+        "/show_path".yellow(), "show the shortest path back to start"
+    );
+    eprintln!(
+        "{:15} - {}",
+        "/dump_dot".yellow(), "dump visited noded graph in the .dot format to file"
+    );
 }
 
 /// This function composes u16 number from little endian byte pair of low byte and high byte
@@ -161,11 +180,7 @@ fn compose_value(byte_pair: (u8, u8)) -> u16 {
     let value = hb + lb;
     trace!(
         "  compose value {} ({:#x}) from bytes {:?} ({:#x}, {:#x})",
-        value,
-        value,
-        byte_pair,
-        byte_pair.0,
-        byte_pair.1
+        value, value, byte_pair, byte_pair.0, byte_pair.1
     );
     // If the value is greater than 32768 + 8 (MAX + number of registers), it will cause panic
     // anyway, so it makes sense to log it early
@@ -202,11 +217,7 @@ fn decompose_value(value: u16) -> (u8, u8) {
     let byte_pair: (u8, u8) = (lb as u8, hb as u8);
     trace!(
         "  decompose bytes {:?} ({:#x}, {:#x}) from value {} ({:#x}) ",
-        byte_pair,
-        byte_pair.0,
-        byte_pair.1,
-        value,
-        value
+        byte_pair, byte_pair.0, byte_pair.1, value, value
     );
     byte_pair
 }
@@ -387,14 +398,50 @@ impl<'b> aux::Commander<'b> for VM {
                         }
                     }
                     "/solve" => {
-                        println!("searching path...");
+                        eprintln!("searching path...");
                         self.maze_analyzer.solve(maze_analyzer::ALLOWED_STEPS);
                     }
                     solve if solve.starts_with("/solve ") => {
-                        let steps = solve.strip_prefix("/solve ").unwrap_or(&format!("{}", maze_analyzer::ALLOWED_STEPS)).to_owned().parse::<u16>()?;
-                        println!("searching path...");
+                        let steps = solve
+                            .strip_prefix("/solve ")
+                            .unwrap_or(&format!("{}", maze_analyzer::ALLOWED_STEPS))
+                            .to_owned()
+                            .parse::<u16>()?;
+                        eprintln!("searching path...");
                         self.maze_analyzer.solve(steps);
                     }
+                    "/show_path" => {
+                       let path = self.maze_analyzer.get_path_back();
+                        if path.is_empty() {
+                            eprintln!(
+                                "no path back was recorded yet. First you need to advance in the maze"
+                            );
+                        } else {
+                            let path_back = path
+                                .iter()
+                                .rev()
+                                .map(|(n, msg, cmd)| {
+                                    format!(
+                                        "{:03}) {} {}",
+                                        n.to_string().green(),
+                                        msg.yellow(),
+                                        cmd.clone()
+                                            .and_then(|c| Some(format!("Command: {}", c).white()))
+                                            .unwrap_or("".black())
+                                    )
+                                })
+                                .collect::<Vec<String>>()
+                                .join("\n");
+                            eprintln!("{}", path_back);
+                        }
+                    }
+                    "/dump_dot" => {
+                        let dot_graph_file = PathBuf::from("maze.dot");
+                        match self.dump_dot(&dot_graph_file) {
+                            Err(st_err) => eprintln!("{}", st_err),
+                            Ok(()) => eprintln!("graph has been successfully saved to {}", dot_graph_file.display()),
+                        }
+                    },
                     user_command => {
                         return Err(format!("unsupported slash command {}", user_command).into());
                     }
@@ -449,7 +496,32 @@ impl VM {
         ));
         state.push_str(&self.maze_analyzer.get_maze_analyzer_state(1));
         state.push_str(&format!("{}\n", "=".repeat(PRINT_WIDTH)));
+        state.push_str("^^^        Shortest path back             ^^^\n");
+        state.push_str(
+            &self
+                .maze_analyzer
+                .get_path_back()
+                .iter()
+                .map(|(n, m, c)| {
+                    format!(
+                        "{:03} {} Command: {}",
+                        n,
+                        m,
+                        c.clone().unwrap_or("N/A".to_string())
+                    )
+                })
+                .collect::<Vec<String>>()
+                .join("\n"),
+        );
+        state.push_str(&format!("\n{}\n", "^".repeat(PRINT_WIDTH)));
         state
+    }
+
+    fn dump_dot(&self, dot_graph_file: &Path) -> Result<(), Box<dyn Error>> {
+        trace!("dumping graph to {}", dot_graph_file.display());
+        let content  = self.maze_analyzer.export_dot_graph()?;
+            std::fs::write(dot_graph_file, content)?;
+        Ok(())
     }
     fn get_registers_info(&self, indent: usize) -> String {
         let mut registers = String::new();
@@ -596,10 +668,7 @@ impl VM {
         let b = self.memory[ptr as usize];
         trace!(
             "  fetched {} [{:#x}] from memory pointer {} [{:#x}] ",
-            b,
-            b,
-            ptr,
-            ptr
+            b, b, ptr, ptr
         );
         b
     }
@@ -643,8 +712,7 @@ impl VM {
         let next_address = self.current_address.next();
         trace!(
             "{} stepping to the next address {}",
-            &self.current_address,
-            next_address
+            &self.current_address, next_address
         );
         self.set_position(next_address);
     }
@@ -652,9 +720,7 @@ impl VM {
         let new_address = self.current_address.add(n);
         trace!(
             "{} stepping {} addresses forward to {}",
-            &self.current_address,
-            n,
-            &new_address
+            &self.current_address, n, &new_address
         );
         self.set_position(new_address);
     }
@@ -678,6 +744,7 @@ impl VM {
         );
         print!("{}", character);
         self.grab_output(character, true);
+        self.maze_analyzer.mark_output_available();
         self.step_n(2);
     }
 
@@ -759,7 +826,7 @@ impl VM {
     fn store_raw_value_to_register(&mut self, register_number: usize, value: u16) {
         assert!(register_number < 8);
         assert!(value < MAX + 8); // Here I tollerate storing register pointer values. Probably it
-                                  // is a mistake
+        // is a mistake
         trace!("storing value {} to register {}", value, register_number);
         self.registers[register_number] = value;
     }
@@ -792,71 +859,59 @@ impl VM {
         if let Data::Register(r) = reg {
             let result = match op {
                 ArithmeticOperations::Add => {
-                    (val1
-                        + self.unpack_data(v2.unwrap_or_else(|| {
-                            panic!(
+                    (val1 + self.unpack_data(v2.unwrap_or_else(|| {
+                        panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                        })))
-                        % MAX
+                    }))) % MAX
                 }
                 ArithmeticOperations::Multiply => {
-                    (val1 as u64
-                        * self.unpack_data(v2.unwrap_or_else(|| {
-                            panic!(
+                    (val1 as u64 * self.unpack_data(v2.unwrap_or_else(|| {
+                        panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                        })) as u64) as u16
+                    })) as u64) as u16
                         % MAX
                 }
                 ArithmeticOperations::And => {
-                    (val1
-                        & self.unpack_data(v2.unwrap_or_else(|| {
-                            panic!(
+                    (val1 & self.unpack_data(v2.unwrap_or_else(|| {
+                        panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                        })))
-                        % MAX
+                    }))) % MAX
                 }
                 ArithmeticOperations::Or => {
-                    (val1
-                        | self.unpack_data(v2.unwrap_or_else(|| {
-                            panic!(
+                    (val1 | self.unpack_data(v2.unwrap_or_else(|| {
+                        panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                        })))
-                        % MAX
+                    }))) % MAX
                 }
                 ArithmeticOperations::Not => {
                     trace!(
                         "   performint bitwise negation operation ~ (!) on {} ({:#b})",
-                        val1,
-                        val1
+                        val1, val1
                     );
                     let result = (!val1) % MAX;
                     trace!("   got negation result {} ({:#b})", result, result);
                     result
                 }
                 ArithmeticOperations::Modulo => {
-                    (val1
-                        % self.unpack_data(v2.unwrap_or_else(|| {
-                            panic!(
+                    (val1 % self.unpack_data(v2.unwrap_or_else(|| {
+                        panic!(
                             "second argumemnt for {} operation is required, but None was provided",
                             op
                         )
-                        })))
-                        % MAX
+                    }))) % MAX
                 }
             };
             trace!(
                 "   got arithmetic ops result {} {:#x} {:#b}",
-                result,
-                result,
-                result
+                result, result, result
             );
             self.store_raw_value_to_register(r, result);
         } else {
@@ -934,9 +989,7 @@ impl VM {
     fn store_equality(&mut self, reg: Data, v1: Data, v2: Data) -> bool {
         trace!(
             " storing result of eq operation of {} and {} to {}",
-            v1,
-            v2,
-            reg
+            v1, v2, reg
         );
         assert!(
             reg.is_register(),
@@ -993,8 +1046,7 @@ impl VM {
             Data::Register(r) => {
                 trace!(
                     " following mem address and setting register {} to value {}",
-                    r,
-                    val
+                    r, val
                 );
                 self.set_value_to_register(r_data, v_data);
             }
@@ -1003,10 +1055,7 @@ impl VM {
                 let raw_value = self.unpack_data(v_data);
                 trace!(
                     "setting literal value {} (orig: {}) to memory address {} (Ptr: {})",
-                    raw_value,
-                    val,
-                    a,
-                    ptr
+                    raw_value, val, a, ptr
                 );
                 self.set_memory(ptr, raw_value);
             }
@@ -1015,9 +1064,7 @@ impl VM {
     fn set_memory(&mut self, ptr: Ptr, val: u16) {
         trace!(
             "  setting value: {} to memory raw ptr: {}({:#x})",
-            val,
-            ptr,
-            ptr
+            val, ptr, ptr
         );
         assert!(
             validate_value(val),
@@ -1056,9 +1103,7 @@ impl VM {
     fn store_greater_than(&mut self, reg: Data, v1: Data, v2: Data) -> bool {
         trace!(
             " storing result of gt operation of {} and {} to {}",
-            v1,
-            v2,
-            reg
+            v1, v2, reg
         );
         assert!(
             reg.is_register(),
@@ -1130,6 +1175,9 @@ impl VM {
     }
 
     fn process_command(&mut self) -> Result<bool, Box<dyn Error>> {
+
+       // TODO: merge it with add_response
+
         // Only next 'enter' should be processed
         let mut do_jump = true; // By default we jump
         if self.spin_slash_command {
@@ -1142,27 +1190,28 @@ impl VM {
         trace!("processing command {:?}", command);
         match command.clone() {
             CommandType::Slash(cmd) => {
-                self.process_slash_command(command)?;
-            },
+                match self.process_slash_command(command) {
+                   Ok(()) =>  {do_jump = false; },
+                    Err(e) => {
+                        info!("{}", e);
+                        eprintln!("{}, please try again.\nType {} to get help on slash commands\nType {} to get help on VM commands", e.to_string().red(), "/help".yellow(), "help".green() );
+                        do_jump = false; },
+                }
+            }
             CommandType::Empty => {
                 //Let do nothing
                 do_jump = false;
             }
             CommandType::Move(cmd) => {
                 cmd.chars().for_each(|c| self.grab_output(c, false));
-                self.solver_command_hook(command.clone())?;
+                // self.solver_command_hook(command.clone())?;
                 self.store_command_to_history(command);
             }
             _ => {
-                self.solver_command_hook(command.clone())?;
+                // self.solver_command_hook(command.clone())?;
                 self.store_command_to_history(command);
             }
         }
-        // let do_save: bool = self.process_slash_command(&command)?;
-        // self.solver_command_hook(&command)?;
-        // if do_save {
-        //     self.store_command_to_history(command);
-        // }
         Ok(do_jump)
     }
     // returns false if command is not stored
@@ -1222,7 +1271,7 @@ impl VM {
             // Perform write
             if let Some(ref mut bw) = self.output_writer {
                 match bw.write(&[c as u8]) {
-                    Ok(count) => trace!("wrote {} bytes to the outout buffer", count),
+                    Ok(count) => trace!("wrote {} bytes to the output buffer", count),
                     Err(buf_e) => {
                         error!(
                             "failed to write character to the output recording buffer. Error: {} Recording stopped",
@@ -1241,32 +1290,53 @@ impl VM {
             self.maze_analyzer.push(c);
         }
     }
+    #[deprecated(note="use solver_search_hook instead")]
     fn solver_command_hook(&mut self, command: CommandType) -> Result<(), Box<dyn Error>> {
+        // self.maze_analyzer.dispatch_response(Some(command))?;
         if self.maze_analyzer.is_rambling() {
-            self.maze_analyzer.dispatch_response(Some(command))?;
             // This will populate the replay buffer
             self.maze_analyzer.ramble(&mut self.replay_buffer);
         }
         Ok(())
     }
+    fn solver_search_hook(&mut self) -> Result<bool, Box<dyn Error>> {
+        if self.maze_analyzer.is_rambling() && self.current_command_buf.is_empty() {
+            match self.maze_analyzer.search(&mut self.replay_buffer)? {
+                true => { eprintln!("the solution has been found"); Ok(true) } ,
+                false => { debug!("search round finished successfully, without solution");Ok(false)},
+            }
+        } else {
+            Ok(false)
+        }
+    }
     fn solver_response_hook(&mut self) -> Result<(), Box<dyn Error>> {
-        if !self.maze_analyzer.is_rambling() || self.maze_analyzer.expect_output() {
-            return Err("maze analyzer does not expect an output".into());
+        if ! self.maze_analyzer.output_is_available() {
+            trace!("maze_analyzer is waiting for output to become available");
+           return Ok(());
         }
         //jump this cycle to re-analyze output
-        trace!("need to re-read input");
+        // trace!("need to re-read input");
         let last_command = self
             .commands_history
             .last()
             .map(|l| CommandType::command_type(l));
         self.maze_analyzer.dispatch_response(last_command)?;
-        self.maze_analyzer.ramble(&mut self.replay_buffer);
+        // if self.maze_analyzer.is_rambling() {
+        //     self.maze_analyzer.ramble(&mut self.replay_buffer);
+        // }
         Ok(())
     }
     /// This function is an implementation of the 'in' operational instruction
     fn read_in(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "in".magenta(), &a);
-        // First we would like to read commands from the replay buffer, if there are any available.
+        // First of all we need to process the previous response
+        let response_hook_success = self.solver_response_hook().map_err(|e| {warn!("solver_response_hook failed: {}", e); e}).is_ok();
+        if response_hook_success { debug!("solver_response_hook succeeded");
+            self.maze_analyzer.mark_output_consumed();
+        }
+        let search_hook_success = self.solver_search_hook().map_err(|e| {warn!("solver_search_hook failed: {}", e); e}).is_ok();
+        if search_hook_success { debug!("solver_search_hook succeeded"); }
+        // Then we would like to read commands from the replay buffer, if there are any available.
         let c: u8 = match self.replay_buffer.pop_front() {
             Some(replay_char) => {
                 eprint!("{}", replay_char.to_string().yellow().underline());
@@ -1276,9 +1346,16 @@ impl VM {
                 // exit earlier without reading the user input, if the autosolver is working
                 // It is needed here, before processing user input.
                 // Other invocation is in grab_input/store_command_to_history
-                if self.solver_response_hook().is_ok() {
-                    return;
-                }
+                // if self
+                //     .solver_response_hook()
+                //     .map_err(|e| {
+                //         debug!("solver response hook returned with error: {}", e);
+                //         e
+                //     })
+                //     .is_ok()
+                // {
+                //     return;
+                // }
                 let mut buf: [u8; 1] = [0];
 
                 match io::stdin().read_exact(&mut buf) {
@@ -1499,7 +1576,6 @@ impl VM {
 
                                 unimplemented!("main loop is not implemented yet");
                     */
-                    // TODO: Probably it worth to add fuctions for each operation...
                     self.noop();
                 }
                 instruction => panic!("got invalid instruction {}", instruction),

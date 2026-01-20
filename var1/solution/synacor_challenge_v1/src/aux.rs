@@ -1,6 +1,6 @@
+use crate::maze_analyzer::CommandType;
 use std::error::Error;
 use std::path::Path;
-use crate::maze_analyzer::CommandType;
 
 pub trait Commander<'b> {
     fn get_replay_commands(&self) -> Vec<String>;
