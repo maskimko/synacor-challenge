@@ -15,6 +15,10 @@ use crate::dot_graph;
 use crate::dot_graph::DotGraphNode;
 use colored::Colorize;
 use std::hash::DefaultHasher;
+use regex::Regex;
+use rand::prelude::Rng;
+use rand::rng;
+use rand::seq::IteratorRandom;
 
 type OptionalNode = Option<Rc<RefCell<Node>>>;
 
@@ -40,6 +44,7 @@ pub struct MazeAnalyzer {
     // Maps inventory name to tuple of uses and looks
     inventory_global: HashMap<String, (u16, u16)>,
     last_node_id: Option<u16>,
+    output_is_available: bool
 }
 
 #[derive(Debug, Default)]
@@ -209,7 +214,19 @@ impl MazeAnalyzer {
             inventory_global: HashMap::new(),
             last_visited_node: None,
             last_node_id: None,
+            output_is_available: false,
         }
+    }
+
+    pub fn mark_output_available(&mut self) {
+        self.output_is_available = true;
+    }
+    pub fn mark_output_consumed(&mut self) {
+        self.output_is_available = false;
+    }
+
+    pub fn output_is_available(&self) -> bool {
+        self.output_is_available
     }
 
     fn global_inventory_hash(&self) -> String {
@@ -223,6 +240,7 @@ impl MazeAnalyzer {
     pub fn is_rambling(&self) -> bool {
         self.steps_left > 0
     }
+    #[deprecated]
     pub fn expect_output(&mut self) -> bool {
         self.commands_counter != self.last_command_num
     }
@@ -257,23 +275,31 @@ impl MazeAnalyzer {
         }
         Ok(())
     }
-    fn add_inventory_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
+    fn add_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
         if self.response_buffer.is_empty() {
             return Ok(());
         }
         let oan: OutputParser = OutputParser::new(self.response_buffer.as_str());
         let resp_parts = oan.parse()?;
-        let is_start_of_graph = self.head.is_none();
+
+        // Let's try to visit edge before updating the head
+
+
+
         // Visit edge is not needed here, because no I visit is when issue it to the replay buffer.
         // self.visit_edge(head.clone(), command.to_string().as_str());
         // TODO: visit node here, because then I can register graph nodes even without running the solver.
 
 
-
+        if self.head.is_none() {
+           // initial response but command exists (replay case)
+            self.add_move_response(resp_parts, command)?;
+        } else {
         match command.clone() {
             Some(CommandType::InventoryTake(item)) => {
                 debug!("taking {} to inventory", item);
                 let head = self.head.clone().ok_or("no head")?;
+                self.visit_edge(head.clone(), command.clone().unwrap().to_string().as_str());
                 let head_response = head.borrow().response();
                 let mut inventory = head_response.inventory.clone();
                 let mut things = head_response.things_of_interest.clone();
@@ -286,6 +312,7 @@ impl MazeAnalyzer {
             Some(CommandType::InventoryDrop(item)) => {
                 debug!("droppoing {} from inventory", item);
                 let head = self.head.clone().ok_or("no head")?;
+                self.visit_edge(head.clone(), command.clone().unwrap().to_string().as_str());
                 let mut inventory = head.borrow().response().inventory.clone();
                 inventory.retain(|i| !i.eq(&item));
                 self.update_inventory(head.clone(), inventory, None)?;
@@ -295,6 +322,7 @@ impl MazeAnalyzer {
             Some(CommandType::InventoryUse(item)) => {
                 debug!("using {} from inventory", item);
                 let head = self.head.clone().ok_or("no head")?;
+                self.visit_edge(head, command.clone().unwrap().to_string().as_str());
                 (*self.inventory_global.entry(item).or_insert((0, 0))).0 += 1;
                 self.inventory_needs_update = true;
                 self.set_aux_commands(resp_parts.pretext, command);
@@ -302,49 +330,28 @@ impl MazeAnalyzer {
             Some(CommandType::InventoryLook(item)) => {
                 debug!("using {} from inventory", item);
                 let head = self.head.clone().ok_or("no head")?;
+                self.visit_edge(head, command.clone().unwrap().to_string().as_str());
                 (*self.inventory_global.entry(item).or_insert((0, 0))).1 += 1;
                 self.set_aux_commands(resp_parts.pretext, command);
             }
             Some(CommandType::Inventory) => {
                 debug!("updating inventory");
                 let head = self.head.clone().ok_or("no head")?;
+                self.visit_edge(head.clone(), command.clone().unwrap().to_string().as_str());
                 self.update_inventory(head.clone(), resp_parts.inventory, None)?;
                 self.set_aux_commands(resp_parts.pretext, command);
                 self.inventory_needs_update = false;
             }
-            None | Some(CommandType::Move(_)) => {
-                // debug!("moving {}", destination);
-                debug!("moving to next node");
-                let node_meta_id = self
-                    .nodes
-                    .get(&resp_parts)
-                    .map(|m| m.id)
-                    .unwrap_or(self.get_node_meta_id());
-                let min_steps = self
-                    .nodes
-                    .get(&resp_parts)
-                    .map(|m| m.min_steps)
-                    .unwrap_or(self.head.clone().map(|h| h.borrow().steps).unwrap_or(0));
-                let previous: OptionalNode = self
-                    .nodes
-                    .get(&resp_parts)
-                    .map(|m| m.origin.clone())
-                    .unwrap_or(self.head.clone());
-                let from = self.head.clone().map(|r| Rc::downgrade(&r));
-                let new_node = Node {
-                    previous,
-                    id: node_meta_id,
-                    response: Rc::new(resp_parts),
-                    steps: min_steps,
-                    come_from: from,
-                };
-                self.head = Some(Rc::new(RefCell::new(new_node))).clone();
-                if is_start_of_graph {
-                    self.first = self.head.clone();
-                }
+            None => {
+debug!("adding empty command case");
+                self.add_move_response(resp_parts, command)?;
+            }
+             Some(CommandType::Move(cmd)) => {
+                 debug!("adding {} to move", cmd);
+                self.add_move_response(resp_parts, command)?;
             }
             Some(_) => panic!("never should be called"),
-        }
+        }}
         let head = self.head.clone().ok_or("no head")?;
         let visits =self.visit_node(head)?;
         debug!("node has {} visits", visits);
@@ -352,6 +359,43 @@ impl MazeAnalyzer {
         // self.nodes .insert(self.head.clone().unwrap().borrow().response(), n_meta);
         self.flush();
         self.commands_counter += 1;
+        Ok(())
+    }
+    fn add_move_response(&mut self, resp_parts: ResponseParts, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
+        // debug!("moving {}", destination);
+        let is_start_of_graph = self.head.is_none();
+        debug!("moving to next node");
+        let node_meta_id = self
+            .nodes
+            .get(&resp_parts)
+            .map(|m| m.id)
+            .unwrap_or(self.get_node_meta_id());
+        let min_steps = self
+            .nodes
+            .get(&resp_parts)
+            .map(|m| m.min_steps)
+            .unwrap_or(self.head.clone().map(|h| h.borrow().steps).unwrap_or(0));
+        let previous: OptionalNode = self
+            .nodes
+            .get(&resp_parts)
+            .map(|m| m.origin.clone())
+            .unwrap_or(self.head.clone());
+        let from = self.head.clone().map(|r| Rc::downgrade(&r));
+        let new_node = Node {
+            previous,
+            id: node_meta_id,
+            response: Rc::new(resp_parts),
+            steps: min_steps,
+            come_from: from,
+        };
+        self.head.clone().map(|h| command.map(|c| self.visit_edge(h.clone(), c.to_string().as_str())));
+        // if command.clone().is_some() {
+        //     self.visit_edge(self.head.clone().unwrap(), command.clone().unwrap().to_string().as_str());
+        // }
+        self.head = Some(Rc::new(RefCell::new(new_node))).clone();
+        if is_start_of_graph {
+            self.first = self.head.clone();
+        }
         Ok(())
     }
     fn update_inventory(
@@ -444,6 +488,7 @@ impl MazeAnalyzer {
         if self.response_buffer.is_empty() {
             return Ok(());
         }
+        // TODO: Merge it with add_response
         match command {
             Some(cmd) => {
                 match cmd.clone() {
@@ -454,13 +499,15 @@ impl MazeAnalyzer {
                     | CommandType::Inventory
                     | CommandType::InventoryDrop(_) => {
                         debug!("dispatching command");
-                        self.add_inventory_response(Some(cmd))
+                        self.add_response(Some(cmd))
                     },
                     CommandType::Move(edge) => {
                         debug!("dispatching {} command", edge);
-                        self.add_inventory_response(Some(cmd))
+                        self.add_response(Some(cmd))
                     }
-                    CommandType::Slash(_) => Err("slash command  should not be dispatched".into()),
+                    CommandType::Slash(_) => {
+                        Err("slash command  should not be dispatched".into())
+                    },
                     CommandType::Empty => {
                         debug!("user issued empty command. No operations performed");
                         // Tolerating
@@ -471,7 +518,7 @@ impl MazeAnalyzer {
             None => {
                 //This usually means that this user's first command was /solve
                 debug!("dispatching to save initial response");
-                self.add_inventory_response(None)
+                self.add_response(None)
             }
         }
     }
@@ -624,7 +671,7 @@ impl MazeAnalyzer {
         Some(mapping)
     }
     fn validate_go_back_command(node: Rc<RefCell<Node>>, cmd: &String) -> bool {
-        Self::get_exits_from_response(&node.borrow().response()).contains(cmd)
+     Self::get_exits_from_response(&node.borrow().response()).contains(cmd)
     }
     fn get_command_back_to_previous(&self, node: Rc<RefCell<Node>>) -> Option<String> {
         let prev_mapping = self.get_prev_node_resp_map(node.clone())?;
@@ -640,7 +687,13 @@ impl MazeAnalyzer {
             Some(oposite_command)
         } else if Self::validate_go_back_command(node.clone(), &"go back".to_string()) {
             Some("go back".to_string())
-        } else {
+        }else if node.borrow().response().message.contains("a twisty maze of little passages, all alike") {
+            // If we are lost and cannot go back just pick a random one
+            let directions = Self::get_exits_from_response(&node.borrow().response());
+            let mut rng = rng();
+            let pick = rng.random_range(0..directions.len());
+            Some(directions[pick].to_string())
+    } else {
             warn!(
                 "Cannot validate opposite command: {}. So there is no path to return? Trying it anyway...",
                 cause_command
@@ -783,10 +836,10 @@ impl MazeAnalyzer {
         // Check for grues
         if resp
             .message
-            .contains("You are likely to be eaten by a grue.")
-            && command.contains("continue")
+            .contains("likely to be eaten by a")
         {
-            return true;
+            return Self::analyse_dangerous_direction(&resp.message, &command).is_ok_and(|danger| danger);
+            //return true;
         }
         if resp
             .message
@@ -802,11 +855,26 @@ impl MazeAnalyzer {
         false
     }
 
+    fn analyse_dangerous_direction(msg: &str, command: &str) -> Result<bool, Box<dyn Error>> {
+        if command.contains("continue") {
+            return Ok(true);
+        }
+        let re = Regex::new(r"The (?P<direction>.*) passage appears very dark.*likely to be eaten by a")?;
+        let capt = re.captures(msg);
+        match capt {
+            Some(capt) => {
+                let direction = capt.name("direction").ok_or("cannot find dangerous direction from the message")?.as_str();
+                Ok(command.contains(direction))
+            }
+            None => Ok(false),
+        }
+    }
+
     pub fn export_dot_graph(&self) -> Result<String, String> {
         let mut graph = dot_graph::DotGraph::new();
         let mut mapping: HashMap<Rc<ResponseParts>, DotGraphNode> = HashMap::new();
         self.nodes.iter().for_each(|(node, meta)| {
-            let mut gn = dot_graph::DotGraphNode::new(meta.id, node.message.clone(), node.title.clone());
+            let mut gn = dot_graph::DotGraphNode::new(meta.id, node.title.clone(), node.message.clone());
             gn = graph.add_node(gn);
             mapping.insert(node.clone(), gn);
         });
@@ -849,25 +917,25 @@ impl MazeAnalyzer {
         }
     }
     fn get_next_edge(&mut self, node: Rc<RefCell<Node>>, max_times_visited: u16) -> Option<String> {
-        if node.borrow().response().title == "Passage" {
-            // TODO: delete this line
-            if node
-                .borrow()
-                .response()
-                .message
-                .contains("A dark passage leads further west.")
-            {
-                warn!("important debug point");
-            }
-            if node
-                .borrow()
-                .response()
-                .message
-                .contains("You are likely to be eaten by a grue.")
-            {
-                warn!("continue DANGER debug point");
-            }
-        }
+        // if node.borrow().response().title == "Passage" {
+        //     // TODO: delete this line
+        //     if node
+        //         .borrow()
+        //         .response()
+        //         .message
+        //         .contains("A dark passage leads further west.")
+        //     {
+        //         warn!("important debug point");
+        //     }
+        //     if node
+        //         .borrow()
+        //         .response()
+        //         .message
+        //         .contains("You are likely to be eaten by a grue.")
+        //     {
+        //         warn!("continue DANGER debug point");
+        //     }
+        // }
         let global_inv = &self.inventory_global;
         let to_prev_node = self.get_command_back_to_previous(node.clone());
         let original_edge = node
@@ -990,27 +1058,29 @@ impl MazeAnalyzer {
     }
 
     /// This function should traverse the maze and find the best route to the exit
-    /// Return value should be a vector of the commands to pass the maze
-    pub fn search(&mut self, replay_buf: &mut VecDeque<char>) -> Result<Vec<String>, String> {
+    /// Return value should be true, if search reached destination
+    // TODO: provide destination argument
+    pub fn search(&mut self, replay_buf: &mut VecDeque<char>) -> Result<bool, String> {
         if self.head.is_none() {
             return Err("maze analyzer must have a head node".into());
         }
         let node = self.head.clone().unwrap();
         self.validate_steps_left(&node.borrow())?;
-        let node_visits = self.visit_node(node.clone())?;
-        trace!("node visited {} times", node_visits);
+        // let node_visits = self.visit_node(node.clone())?;
+        // trace!("node visited {} times", node_visits);
         const VISITS_LIMIT_PER_EDGE: u16 = 25;
         self.enqueue_commands(node.clone(), VISITS_LIMIT_PER_EDGE)?;
         // We pop exactly 1 command, because new node will give other commands
         if let Some(cmd) = self.commands_queue.pop_front() {
-            self.visit_edge(node, &cmd);
+            // I will visit on the dispatch phase, to allow building graph even without the solver running
+            // self.visit_edge(node, &cmd);
             cmd.chars().for_each(|c| replay_buf.push_back(c));
             replay_buf.push_back('\n');
             self.last_command_num = self.commands_counter;
             self.steps_left -= 1; // decrementing each command we issued
         }
 
-        Ok(vec![])
+        Ok(false)
     }
 
     pub fn solve(&mut self, steps_limit: u16) {
@@ -1022,6 +1092,7 @@ impl MazeAnalyzer {
         self.steps_left += steps_limit;
         //  self.commands_counter += 1; //To expect output
     }
+    #[deprecated( note="use search method directly instead")]
     pub fn ramble(&mut self, replay_buf: &mut VecDeque<char>) {
         if self.expect_output() {
             match self.search(replay_buf) {

@@ -744,6 +744,7 @@ impl VM {
         );
         print!("{}", character);
         self.grab_output(character, true);
+        self.maze_analyzer.mark_output_available();
         self.step_n(2);
     }
 
@@ -1174,6 +1175,9 @@ impl VM {
     }
 
     fn process_command(&mut self) -> Result<bool, Box<dyn Error>> {
+
+       // TODO: merge it with add_response
+
         // Only next 'enter' should be processed
         let mut do_jump = true; // By default we jump
         if self.spin_slash_command {
@@ -1186,7 +1190,13 @@ impl VM {
         trace!("processing command {:?}", command);
         match command.clone() {
             CommandType::Slash(cmd) => {
-                self.process_slash_command(command)?;
+                match self.process_slash_command(command) {
+                   Ok(()) =>  {do_jump = false; },
+                    Err(e) => {
+                        info!("{}", e);
+                        eprintln!("{}, please try again.\nType {} to get help on slash commands\nType {} to get help on VM commands", e.to_string().red(), "/help".yellow(), "help".green() );
+                        do_jump = false; },
+                }
             }
             CommandType::Empty => {
                 //Let do nothing
@@ -1194,11 +1204,11 @@ impl VM {
             }
             CommandType::Move(cmd) => {
                 cmd.chars().for_each(|c| self.grab_output(c, false));
-                self.solver_command_hook(command.clone())?;
+                // self.solver_command_hook(command.clone())?;
                 self.store_command_to_history(command);
             }
             _ => {
-                self.solver_command_hook(command.clone())?;
+                // self.solver_command_hook(command.clone())?;
                 self.store_command_to_history(command);
             }
         }
@@ -1276,37 +1286,57 @@ impl VM {
                 }
             }
         }
-        self.maze_analyzer.push(c);
-        // if analyze {
-        //     self.maze_analyzer.push(c);
-        // }
+        if analyze {
+            self.maze_analyzer.push(c);
+        }
     }
+    #[deprecated(note="use solver_search_hook instead")]
     fn solver_command_hook(&mut self, command: CommandType) -> Result<(), Box<dyn Error>> {
-        self.maze_analyzer.dispatch_response(Some(command))?;
+        // self.maze_analyzer.dispatch_response(Some(command))?;
         if self.maze_analyzer.is_rambling() {
             // This will populate the replay buffer
             self.maze_analyzer.ramble(&mut self.replay_buffer);
         }
         Ok(())
     }
+    fn solver_search_hook(&mut self) -> Result<bool, Box<dyn Error>> {
+        if self.maze_analyzer.is_rambling() && self.current_command_buf.is_empty() {
+            match self.maze_analyzer.search(&mut self.replay_buffer)? {
+                true => { eprintln!("the solution has been found"); Ok(true) } ,
+                false => { debug!("search round finished successfully, without solution");Ok(false)},
+            }
+        } else {
+            Ok(false)
+        }
+    }
     fn solver_response_hook(&mut self) -> Result<(), Box<dyn Error>> {
-        if !self.maze_analyzer.is_rambling() || self.maze_analyzer.expect_output() {
-            return Err("maze analyzer does not expect an output".into());
+        if ! self.maze_analyzer.output_is_available() {
+            trace!("maze_analyzer is waiting for output to become available");
+           return Ok(());
         }
         //jump this cycle to re-analyze output
-        trace!("need to re-read input");
+        // trace!("need to re-read input");
         let last_command = self
             .commands_history
             .last()
             .map(|l| CommandType::command_type(l));
         self.maze_analyzer.dispatch_response(last_command)?;
-        self.maze_analyzer.ramble(&mut self.replay_buffer);
+        // if self.maze_analyzer.is_rambling() {
+        //     self.maze_analyzer.ramble(&mut self.replay_buffer);
+        // }
         Ok(())
     }
     /// This function is an implementation of the 'in' operational instruction
     fn read_in(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "in".magenta(), &a);
-        // First we would like to read commands from the replay buffer, if there are any available.
+        // First of all we need to process the previous response
+        let response_hook_success = self.solver_response_hook().map_err(|e| {warn!("solver_response_hook failed: {}", e); e}).is_ok();
+        if response_hook_success { debug!("solver_response_hook succeeded");
+            self.maze_analyzer.mark_output_consumed();
+        }
+        let search_hook_success = self.solver_search_hook().map_err(|e| {warn!("solver_search_hook failed: {}", e); e}).is_ok();
+        if search_hook_success { debug!("solver_search_hook succeeded"); }
+        // Then we would like to read commands from the replay buffer, if there are any available.
         let c: u8 = match self.replay_buffer.pop_front() {
             Some(replay_char) => {
                 eprint!("{}", replay_char.to_string().yellow().underline());
@@ -1316,16 +1346,16 @@ impl VM {
                 // exit earlier without reading the user input, if the autosolver is working
                 // It is needed here, before processing user input.
                 // Other invocation is in grab_input/store_command_to_history
-                if self
-                    .solver_response_hook()
-                    .map_err(|e| {
-                        debug!("solver response hook returned with error: {}", e);
-                        e
-                    })
-                    .is_ok()
-                {
-                    return;
-                }
+                // if self
+                //     .solver_response_hook()
+                //     .map_err(|e| {
+                //         debug!("solver response hook returned with error: {}", e);
+                //         e
+                //     })
+                //     .is_ok()
+                // {
+                //     return;
+                // }
                 let mut buf: [u8; 1] = [0];
 
                 match io::stdin().read_exact(&mut buf) {
