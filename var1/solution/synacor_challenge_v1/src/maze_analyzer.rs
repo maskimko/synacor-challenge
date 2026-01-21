@@ -258,6 +258,7 @@ impl MazeAnalyzer {
         self.nodes.insert(resp, n_meta);
         Some(())
     }
+    // replace_head is used after setting inventory only
     fn replace_head(&mut self, new_response: ResponseParts) -> Result<(), Box<dyn Error>> {
         let head = self.head.clone().ok_or("no head")?;
         // Replace head
@@ -321,11 +322,11 @@ impl MazeAnalyzer {
             }
             Some(CommandType::InventoryUse(item)) => {
                 debug!("using {} from inventory", item);
-                let head = self.head.clone().ok_or("no head")?;
-                self.visit_edge(head, command.clone().unwrap().to_string().as_str());
+                let pretext = resp_parts.pretext.clone();
+                self.visit_edge(self.head.clone().expect("no head"), command.clone().unwrap().to_string().as_str());
                 (*self.inventory_global.entry(item).or_insert((0, 0))).0 += 1;
                 self.inventory_needs_update = true;
-                self.set_aux_commands(resp_parts.pretext, command);
+                self.set_aux_commands(pretext, command);
             }
             Some(CommandType::InventoryLook(item)) => {
                 debug!("using {} from inventory", item);
@@ -361,42 +362,38 @@ debug!("adding empty command case");
         self.commands_counter += 1;
         Ok(())
     }
-    fn add_move_response(&mut self, resp_parts: ResponseParts, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
+    fn add_move_response(&mut self, mut resp_parts: ResponseParts, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
         // debug!("moving {}", destination);
         let is_start_of_graph = self.head.is_none();
         debug!("moving to next node");
-        let node_meta_id = self
-            .nodes
-            .get(&resp_parts)
-            .map(|m| m.id)
-            .unwrap_or(self.get_node_meta_id());
-        let min_steps = self
-            .nodes
-            .get(&resp_parts)
-            .map(|m| m.min_steps)
-            .unwrap_or(self.head.clone().map(|h| h.borrow().steps).unwrap_or(0));
-        let previous: OptionalNode = self
-            .nodes
-            .get(&resp_parts)
-            .map(|m| m.origin.clone())
-            .unwrap_or(self.head.clone());
+       let id_fallback_value = self.get_node_meta_id();
+        let steps_fallback_value = self.head.as_ref().map(|h|h.borrow().steps).unwrap_or(0);
+        let n_meta = self.nodes.get(&resp_parts);
+        let (id, steps, previous) =  (
+            n_meta.map(|m|m.id).unwrap_or(id_fallback_value),
+        n_meta.map(|m|m.min_steps).unwrap_or(steps_fallback_value),
+        n_meta.map(|m|m.origin.clone()).unwrap_or(self.head.clone()),
+        );
         let from = self.head.clone().map(|r| Rc::downgrade(&r));
+        self.pass_inventory(&mut resp_parts);
         let new_node = Node {
             previous,
-            id: node_meta_id,
+            id,
+            steps,
             response: Rc::new(resp_parts),
-            steps: min_steps,
             come_from: from,
         };
         self.head.clone().map(|h| command.map(|c| self.visit_edge(h.clone(), c.to_string().as_str())));
-        // if command.clone().is_some() {
-        //     self.visit_edge(self.head.clone().unwrap(), command.clone().unwrap().to_string().as_str());
-        // }
         self.head = Some(Rc::new(RefCell::new(new_node))).clone();
         if is_start_of_graph {
             self.first = self.head.clone();
         }
         Ok(())
+    }
+    fn pass_inventory(&self, resp_parts: &mut ResponseParts) {
+        if self.head.is_some() {
+           self.head.as_ref().map(|h| h.borrow().response.inventory.clone()).map(|inv| resp_parts.inventory.extend(inv.into_iter()));
+        }
     }
     fn update_inventory(
         &mut self,
@@ -522,47 +519,6 @@ debug!("adding empty command case");
             }
         }
     }
-    /// This function adds response from the inner resonse buffer
-    // fn add_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
-    //     // TODO: Combine methods with add_inventory_response
-    //     if self.response_buffer.is_empty() {
-    //         return Ok(());
-    //     }
-    //     let oan: OutputParser = OutputParser::new(self.response_buffer.as_str());
-    //     let is_start_of_graph = self.head.is_none();
-    //     let resp_parts = oan.parse()?;
-    //     // Assign ID if known
-    //     let node_meta_id = self
-    //         .nodes
-    //         .get(&resp_parts)
-    //         .map(|m| m.id)
-    //         .unwrap_or(self.get_node_meta_id());
-    //     let min_steps = self
-    //         .nodes
-    //         .get(&resp_parts)
-    //         .map(|m| m.min_steps)
-    //         .unwrap_or(self.head.clone().map(|h| h.borrow().steps).unwrap_or(0));
-    //     let previous: OptionalNode = self
-    //         .nodes
-    //         .get(&resp_parts)
-    //         .map(|m| m.origin.clone())
-    //         .unwrap_or(self.head.clone());
-    //     let from = self.head.clone().map(|r| Rc::downgrade(&r));
-    //     let new_node = Node {
-    //         previous,
-    //         id: node_meta_id,
-    //         response: Rc::new(resp_parts),
-    //         steps: min_steps,
-    //         come_from: from,
-    //     };
-    //     self.head = Some(Rc::new(RefCell::new(new_node))).clone();
-    //     if is_start_of_graph {
-    //         self.first = self.head.clone();
-    //     }
-    //     self.flush();
-    //     self.commands_counter += 1;
-    //     Ok(())
-    // }
 
     pub fn push(&mut self, c: char) {
         self.response_buffer.push(c);
@@ -757,7 +713,6 @@ debug!("adding empty command case");
        Ok(())
     }
     fn link_previous(&mut self, node: Rc<RefCell<Node>>) -> Result<u16, String> {
-        let resp = node.borrow().response();
         let prev = node.borrow().previous().ok_or("No previous node")?;
         let from = node.borrow().come_from.clone();
         if let Some(from_nod_ref) = from.map(|f| f.upgrade()).flatten() {
@@ -771,23 +726,6 @@ debug!("adding empty command case");
             );
         }
         self.link_nodes(node, prev.borrow())?;
-        // let original_edge = self
-        //     .nodes
-        //     .get(&prev.borrow().response())
-        //     .ok_or("no node metadata")?
-        //     .last_visited_edge
-        //     .clone()
-        //     .ok_or("no visited edges")?;
-        // self.nodes
-        //     .entry(prev.borrow().response())
-        //     .and_modify(|prev_meta| {
-        //         prev_meta
-        //             .response_2_edge
-        //             .insert(resp.clone(), original_edge.clone());
-        //         prev_meta
-        //             .edge_2_response
-        //             .insert(original_edge, resp.clone());
-        //     });
         Ok(prev.borrow().steps)
     }
     /// Creates node metadata or increments visits counter
@@ -849,7 +787,7 @@ debug!("adding empty command case");
             return true;
         }
         if resp.message.contains("you think you hear a Grue") {
-            return prev_command.map(|p| p.eq(command)).unwrap_or(false);
+            return Self::analyse_dangerous_direction(&resp.message, &command).is_ok_and(|danger| danger);
         }
 
         false
@@ -859,15 +797,18 @@ debug!("adding empty command case");
         if command.contains("continue") {
             return Ok(true);
         }
-        let re = Regex::new(r"The (?P<direction>.*) passage appears very dark.*likely to be eaten by a")?;
-        let capt = re.captures(msg);
-        match capt {
-            Some(capt) => {
-                let direction = capt.name("direction").ok_or("cannot find dangerous direction from the message")?.as_str();
-                Ok(command.contains(direction))
-            }
-            None => Ok(false),
-        }
+        const DANGEROUS_PATTERNS: [&str; 2] = [r"The (?P<direction>.*) passage appears very dark", r"The passage to the (?P<direction>.*) looks very dark"];
+        let dangerous_regex = DANGEROUS_PATTERNS.iter().map(|p| Regex::new(p).unwrap()).collect::<Vec<_>>();
+        Ok(dangerous_regex.iter().map(|re| re.captures(msg)).flatten().map(|capt| capt.name("direction")).flatten().any(|dangerous| command.contains(dangerous.as_str())))
+        // let re = Regex::new(r"The (?P<direction>.*) passage appears very dark")?;
+        // let capt = re.captures(msg);
+        // match capt {
+        //     Some(capt) => {
+        //         let direction = capt.name("direction").ok_or("cannot find dangerous direction from the message")?.as_str();
+        //         Ok(command.contains(direction))
+        //     }
+        //     None => Ok(false),
+        // }
     }
 
     pub fn export_dot_graph(&self) -> Result<String, String> {

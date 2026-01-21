@@ -1290,15 +1290,6 @@ impl VM {
             self.maze_analyzer.push(c);
         }
     }
-    #[deprecated(note="use solver_search_hook instead")]
-    fn solver_command_hook(&mut self, command: CommandType) -> Result<(), Box<dyn Error>> {
-        // self.maze_analyzer.dispatch_response(Some(command))?;
-        if self.maze_analyzer.is_rambling() {
-            // This will populate the replay buffer
-            self.maze_analyzer.ramble(&mut self.replay_buffer);
-        }
-        Ok(())
-    }
     fn solver_search_hook(&mut self) -> Result<bool, Box<dyn Error>> {
         if self.maze_analyzer.is_rambling() && self.current_command_buf.is_empty() {
             match self.maze_analyzer.search(&mut self.replay_buffer)? {
@@ -1314,16 +1305,11 @@ impl VM {
             trace!("maze_analyzer is waiting for output to become available");
            return Ok(());
         }
-        //jump this cycle to re-analyze output
-        // trace!("need to re-read input");
         let last_command = self
             .commands_history
             .last()
             .map(|l| CommandType::command_type(l));
         self.maze_analyzer.dispatch_response(last_command)?;
-        // if self.maze_analyzer.is_rambling() {
-        //     self.maze_analyzer.ramble(&mut self.replay_buffer);
-        // }
         Ok(())
     }
     /// This function is an implementation of the 'in' operational instruction
@@ -1343,19 +1329,6 @@ impl VM {
                 replay_char as u8
             }
             None => {
-                // exit earlier without reading the user input, if the autosolver is working
-                // It is needed here, before processing user input.
-                // Other invocation is in grab_input/store_command_to_history
-                // if self
-                //     .solver_response_hook()
-                //     .map_err(|e| {
-                //         debug!("solver response hook returned with error: {}", e);
-                //         e
-                //     })
-                //     .is_ok()
-                // {
-                //     return;
-                // }
                 let mut buf: [u8; 1] = [0];
 
                 match io::stdin().read_exact(&mut buf) {
