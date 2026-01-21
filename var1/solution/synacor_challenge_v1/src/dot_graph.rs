@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use petgraph::data::Build;
 use petgraph::dot::{Config, Dot};
@@ -10,12 +11,12 @@ pub struct DotGraphNode {
     pub label: String,
     inventory: Vec<String>,
     steps: u16,
-
+notes:  HashMap<String, String>,
     index: Option<NodeIndex>,
 }
 
 impl DotGraphNode {
-    pub fn new(id: u16, title: String, message: String, steps: u16, inventory: &[&str]) -> DotGraphNode {
+    pub fn new(id: u16, title: String, message: String, steps: u16, inventory: &[&str], notes: & HashMap<String, String>) -> DotGraphNode {
         DotGraphNode {
             id,
             message,
@@ -23,6 +24,7 @@ impl DotGraphNode {
             label: title,
             index: None,
             inventory: inventory.iter().map(|s| s.to_string()).collect(),
+            notes: notes.clone()
         }
     }
 
@@ -38,9 +40,15 @@ impl DotGraphNode {
 
     fn dot_display(&self) -> String {
         let inventory: String =  if self.inventory.is_empty() {
-            "<TD COLOR=\"#a0522d\"><I>Inventory is empty</I></TD>".to_string()
+            "<TD COLOR=\"#a9522d\" BORDER=\"1\" ><I>Inventory is empty</I></TD>".to_string()
         } else {
-            format!("<TD ALIGN=\"LEFT\"><B>Inventory:</B></TD>{}", self.inventory.iter().map(|s| format!("<TD ALIGN=\"CENTER\">{}</TD>", s)).collect::<String>())
+            format!("<TD ALIGN=\"LEFT\"  ><B>Inventory:</B></TD>{}", self.inventory.iter().map(|s| format!("<TD BORDER=\"1\" BGCOLOR=\"#FFFFBB\" ALIGN=\"CENTER\">{}</TD>", s)).collect::<String>())
+        };
+        let notes: String = if self.notes.is_empty() {
+            // "<TD COLOR=\"#a0522d\"><I>Inventory is empty</I></TD>"
+            "".to_string()
+        }else {
+            format!("<HR/>{}", self.notes.iter().map(|(o,c)| format!("<TR><TD COLOR=\"#a0522d\" BORDER=\"1\" TITLE=\"Command\" ALIGN=\"RIGHT\" >{}</TD><TD COLOR=\"#a0522d\" BGCOLOR=\"#FBE5FF\" BORDER=\"1\" TITLE=\"Output\" ALIGN=\"LEFT\" >{}</TD></TR>", o, c)).collect::<String>())
         };
         format!(r#"shape="rect" style="rounded" label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0">
                 <TR><TD ALIGN="LEFT"><B>[{}]</B></TD><TD ALIGN="LEFT"><B>{}</B></TD><TD ALIGN="RIGHT"><I>Steps: {}</I></TD></TR>
@@ -48,10 +56,11 @@ impl DotGraphNode {
                 <TR>{}</TR>
                 <HR/>
                 <TR><TD ALIGN="LEFT">{}</TD></TR>
-            </TABLE>>"#, self.id, self.label, self.steps, inventory,self.message.replace('\n', "<BR/>"))
+                {}
+            </TABLE>>"#, self.id, self.label, self.steps, inventory,self.message.replace('\n', "<BR/>"),notes)
     }
 }
-impl fmt::Display for DotGraphNode {
+impl<'a> fmt::Display for DotGraphNode {
    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
        write!(f, "[{}] {}\n{}", self.id, self.label, self.message)
    }

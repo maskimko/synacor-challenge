@@ -411,7 +411,7 @@ impl<'b> aux::Commander<'b> for VM {
                         self.maze_analyzer.solve(steps);
                     }
                     "/show_path" => {
-                       let path = self.maze_analyzer.get_path_back();
+                       let path = self.maze_analyzer.get_full_path_back();
                         if path.is_empty() {
                             eprintln!(
                                 "no path back was recorded yet. First you need to advance in the maze"
@@ -500,7 +500,7 @@ impl VM {
         state.push_str(
             &self
                 .maze_analyzer
-                .get_path_back()
+                .get_full_path_back()
                 .iter()
                 .map(|(n, m, c)| {
                     format!(

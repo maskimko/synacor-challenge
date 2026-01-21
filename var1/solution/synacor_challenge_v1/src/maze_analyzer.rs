@@ -44,7 +44,8 @@ pub struct MazeAnalyzer {
     // Maps inventory name to tuple of uses and looks
     inventory_global: HashMap<String, (u16, u16)>,
     last_node_id: Option<u16>,
-    output_is_available: bool
+    output_is_available: bool,
+    checkpoint_nodes: Vec<Rc<RefCell<Node>>>
 }
 
 #[derive(Debug, Default)]
@@ -215,6 +216,7 @@ impl MazeAnalyzer {
             last_visited_node: None,
             last_node_id: None,
             output_is_available: false,
+            checkpoint_nodes: Vec::new(),
         }
     }
 
@@ -249,13 +251,18 @@ impl MazeAnalyzer {
     }
 
     fn set_aux_commands(&mut self, output: String, command: Option<CommandType>) -> Option<()> {
-        let resp = self.head.clone()?.borrow().response();
-        let mut n_meta = self.nodes.remove(&resp)?;
-        n_meta
-            .auxiliary_commands
-            .insert(command?.to_string(), output);
-        // And return it back
-        self.nodes.insert(resp, n_meta);
+        if output.is_empty() {
+            return None;
+        }
+        let node = self.head.clone()?;
+        let resp = node.borrow().response();
+        self.nodes.entry(resp).and_modify(|m| { let i = m.auxiliary_commands.insert(command.unwrap_or(CommandType::Empty).to_string(), output.clone()); debug!("add {:?} to inventory of node {}", i, node.borrow().id)}  );
+        // let mut n_meta = self.nodes.remove(&resp)?;
+        // n_meta
+        //     .auxiliary_commands
+        //     .insert(command?.to_string(), output);
+        // // And return it back
+        // self.nodes.insert(resp, n_meta);
         Some(())
     }
     // replace_head is used after setting inventory only
@@ -264,17 +271,33 @@ impl MazeAnalyzer {
         // Replace head
         let mut new_node = Node {
             response: Rc::new(new_response),
-            steps: head.borrow().steps + 1,
+            steps: head.borrow().steps+1,
             previous: head.borrow().previous().clone(),
             id: head.borrow().id,
             come_from: head.borrow().come_from.clone()
         };
-        new_node.steps = head.borrow().steps + 1;
         self.head = Some(Rc::new(RefCell::new(new_node)));
         if head.borrow().previous().is_none() {
             self.first = self.head.clone();
         }
+        // move meta as well
+        let corresponding_meta = self.nodes.remove(&head.borrow().response());
+        self.nodes.insert(self.head.clone().unwrap().borrow().response(), corresponding_meta.unwrap());
         Ok(())
+    }
+
+    fn save_checkpoint(&mut self, node: Rc<RefCell<Node>>)  {
+        debug!("save checkpoint {}", node.borrow().id);
+        self.checkpoint_nodes.push(node.clone());
+        match node.borrow().previous() {
+            Some(_) => {
+                let commands  = self.get_full_path_back().into_iter().map(|(_,_,cmd) | cmd).filter(|cmd| cmd.is_some()).map(|cmd| cmd.unwrap()).collect::<Vec<String>>().join(" -> ");
+                eprintln!("Commands: to node {}: {}", node.borrow().id, commands.yellow());
+            },
+            None => {
+                debug!("checkpoint at initial node {}", node.borrow().id);
+            }
+        }
     }
     fn add_response(&mut self, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
         if self.response_buffer.is_empty() {
@@ -282,23 +305,20 @@ impl MazeAnalyzer {
         }
         let oan: OutputParser = OutputParser::new(self.response_buffer.as_str());
         let resp_parts = oan.parse()?;
-
-        // Let's try to visit edge before updating the head
-
-
-
-        // Visit edge is not needed here, because no I visit is when issue it to the replay buffer.
-        // self.visit_edge(head.clone(), command.to_string().as_str());
-        // TODO: visit node here, because then I can register graph nodes even without running the solver.
-
-
+        if resp_parts.dont_understand {
+            debug!("this response means that program did not understand the previous command");
+            trace!("flushing the buffer");
+            self.flush();
+            return Ok(());
+        }
         if self.head.is_none() {
            // initial response but command exists (replay case)
-            self.add_move_response(resp_parts, command)?;
+            self.add_initial_response(resp_parts)?;
         } else {
         match command.clone() {
             Some(CommandType::InventoryTake(item)) => {
                 debug!("taking {} to inventory", item);
+                self.save_checkpoint(self.head.clone().unwrap());
                 let head = self.head.clone().ok_or("no head")?;
                 self.visit_edge(head.clone(), command.clone().unwrap().to_string().as_str());
                 let head_response = head.borrow().response();
@@ -339,9 +359,8 @@ impl MazeAnalyzer {
                 debug!("updating inventory");
                 let head = self.head.clone().ok_or("no head")?;
                 self.visit_edge(head.clone(), command.clone().unwrap().to_string().as_str());
-                self.update_inventory(head.clone(), resp_parts.inventory, None)?;
+                self.inventory_needs_update= self.update_inventory(head.clone(), resp_parts.inventory, None)?;
                 self.set_aux_commands(resp_parts.pretext, command);
-                self.inventory_needs_update = false;
             }
             None => {
 debug!("adding empty command case");
@@ -362,27 +381,25 @@ debug!("adding empty command case");
         self.commands_counter += 1;
         Ok(())
     }
+    fn add_initial_response(&mut self, response_parts: ResponseParts) -> Result<(), Box<dyn Error>> {
+        self.add_move_response(response_parts, None)
+    }
     fn add_move_response(&mut self, mut resp_parts: ResponseParts, command: Option<CommandType>) -> Result<(), Box<dyn Error>> {
         // debug!("moving {}", destination);
         let is_start_of_graph = self.head.is_none();
         debug!("moving to next node");
        let id_fallback_value = self.get_node_meta_id();
-        let steps_fallback_value = self.head.as_ref().map(|h|h.borrow().steps).unwrap_or(0);
+        let steps_fallback_value = self.head.as_ref().map(|h|h.borrow().steps +1).unwrap_or(0);
         let n_meta = self.nodes.get(&resp_parts);
         let (id, steps, previous) =  (
             n_meta.map(|m|m.id).unwrap_or(id_fallback_value),
         n_meta.map(|m|m.min_steps).unwrap_or(steps_fallback_value),
+            // TODO: debug minimal origin
         n_meta.map(|m|m.origin.clone()).unwrap_or(self.head.clone()),
         );
         let from = self.head.clone().map(|r| Rc::downgrade(&r));
         self.pass_inventory(&mut resp_parts);
-        let new_node = Node {
-            previous,
-            id,
-            steps,
-            response: Rc::new(resp_parts),
-            come_from: from,
-        };
+        let new_node = Node { previous, id, steps, response: Rc::new(resp_parts), come_from: from, };
         self.head.clone().map(|h| command.map(|c| self.visit_edge(h.clone(), c.to_string().as_str())));
         self.head = Some(Rc::new(RefCell::new(new_node))).clone();
         if is_start_of_graph {
@@ -400,7 +417,12 @@ debug!("adding empty command case");
         node: Rc<RefCell<Node>>,
         items: Vec<String>,
         things: Option<Vec<String>>,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<bool, Box<dyn Error>> {
+        let head_response = node.borrow().response();
+        if head_response.inventory.eq(&items) {
+            debug!("inventory has not changed");
+            return Ok(false);
+        }
         // Update global inventory
         // Remove items from global inventory, which are not present in the argument
         let mut global_inv = &mut self.inventory_global;
@@ -412,7 +434,6 @@ debug!("adding empty command case");
         });
 
         // Update node inventory
-        let head_response = node.borrow().response();
         let new_response: ResponseParts = ResponseParts {
             inventory: items,
             things_of_interest: things.unwrap_or(head_response.things_of_interest.clone()),
@@ -423,9 +444,44 @@ debug!("adding empty command case");
             dont_understand: head_response.dont_understand.clone(),
         };
         self.replace_head(new_response)?;
-        Ok(())
+        Ok(false)
     }
-    pub fn get_path_back(&self) -> Vec<(u16, String, Option<String>)> {
+    // pub fn get_short_path_back(&self) -> Vec<(u16, String, Option<String>)> {
+    //     // TODO: rewrite it with using origin instead of previous
+    //     let mut path: Vec<(u16, String, Option<String>)> = vec![];
+    //     let mut current_meta = self.nodes.get(&self.head.unwrap().borrow().response);
+    //     let mut cmd: Option<String> = None;
+    //     while let Some(node_meta) = current_meta {
+    //         match node_meta.origin {
+    //             Some(prev) => {
+    //                 let prev_meta = self
+    //                     .nodes
+    //                     .get(&prev.borrow().response())
+    //                     .expect("previous meta is absent, however the previous node exists");
+    //                 let causing_edge = prev_meta
+    //                     .response_2_edge
+    //                     .get(node_meta.)
+    //                     .cloned();
+    //                 path.push((
+    //                     node.borrow().id,
+    //                     node.borrow().response().message.clone(),
+    //                     cmd.clone(),
+    //                 ));
+    //                 cmd = causing_edge;
+    //             }
+    //             None => {
+    //                 path.push((
+    //                     node.borrow().id,
+    //                     node.borrow().response().message.clone(),
+    //                     cmd.clone(),
+    //                 ));
+    //             }
+    //         }
+    //         current = node.borrow().previous.clone();
+    //     }
+    //     path
+    // }
+    pub fn get_full_path_back(&self) -> Vec<(u16, String, Option<String>)> {
         let mut path: Vec<(u16, String, Option<String>)> = vec![];
         let mut current = self.head.clone();
         let mut cmd: Option<String> = None;
@@ -815,7 +871,8 @@ debug!("adding empty command case");
         let mut graph = dot_graph::DotGraph::new();
         let mut mapping: HashMap<Rc<ResponseParts>, DotGraphNode> = HashMap::new();
         self.nodes.iter().for_each(|(node, meta)| {
-            let mut gn = dot_graph::DotGraphNode::new(meta.id, node.title.clone(), node.message.clone(), meta.min_steps, node.inventory.iter().map(String::as_str).collect::<Vec<&str>>().as_slice());
+            let notes = &meta.auxiliary_commands;
+            let mut gn :DotGraphNode = dot_graph::DotGraphNode::new(meta.id, node.title.clone(), node.message.clone(), meta.min_steps, node.inventory.iter().map(String::as_str).collect::<Vec<&str>>().as_slice(), notes);
             gn = graph.add_node(gn);
             mapping.insert(node.clone(), gn);
         });
