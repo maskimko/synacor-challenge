@@ -46,41 +46,148 @@ impl DotGraphNode {
     }
 
     fn dot_display(&self) -> String {
+        const BG: &str = "#2D2E27"; // node panel
+        const BG2: &str = "#31332B"; // subtle strip
+        const BORDER: &str = "#75715E"; // monokai "comment"/border
+        const TEXT: &str = "#F8F8F2"; // main text
+        const MUTED: &str = "#CFCFC2"; // secondary text
+        const YELLOW: &str = "#E6DB74"; // title
+        const MAGENTA: &str = "#F92672"; // id
+        const CYAN: &str = "#66D9EF"; // steps / links
+        const GREEN: &str = "#A6E22E"; // inventory items
+        const PURPLE: &str = "#AE81FF"; // command
+        const ORANGE: &str = "#FD971F"; // optional accent
+
+        // Inventory row always spans 8 columns total (1 + 7)
         let inventory: String = if self.inventory.is_empty() {
-            "<TD COLOR=\"#a9522d\" BORDER=\"1\" ><I>Inventory is empty</I></TD>".to_string()
-        } else {
             format!(
-                "<TD ALIGN=\"LEFT\"  ><B>Inventory:</B></TD>{}",
-                self.inventory
-                    .iter()
-                    .map(|s| format!(
-                        "<TD BORDER=\"1\" BGCOLOR=\"#FFFFBB\" ALIGN=\"CENTER\">{}</TD>",
-                        s
-                    ))
-                    .collect::<String>()
+                r#"<TD COLSPAN="1" WIDTH="95" ALIGN="RIGHT" BGCOLOR="{bg2}">
+                  <B><FONT COLOR="{muted}">Inventory:</FONT></B>
+               </TD>
+               <TD COLSPAN="7" ALIGN="LEFT" BGCOLOR="{bg}">
+                  <I><FONT COLOR="{border}">empty</FONT></I>
+               </TD>"#,
+                bg = BG,
+                bg2 = BG2,
+                muted = MUTED,
+                border = BORDER
+            )
+        } else {
+            let items = self
+                .inventory
+                .iter()
+                .map(|s| {
+                    format!(
+                        r#"<TD BGCOLOR="{tag_bg}" ALIGN="CENTER">
+                      <B><FONT COLOR="{green}">{}</FONT></B>
+                   </TD>"#,
+                        s,
+                        tag_bg = "#3B3C35",
+                        green = GREEN
+                    )
+                })
+                .collect::<String>();
+
+            format!(
+                r#"<TD COLSPAN="1" WIDTH="95" ALIGN="RIGHT" BGCOLOR="{bg2}">
+                  <B><FONT COLOR="{muted}">Inventory:</FONT></B>
+               </TD>
+               <TD COLSPAN="7" ALIGN="LEFT" BGCOLOR="{bg}">
+                 <TABLE BORDER="0" CELLBORDER="1" COLOR="{border}" CELLSPACING="0" CELLPADDING="4">
+                   <TR>{}</TR>
+                 </TABLE>
+               </TD>"#,
+                items,
+                bg = BG,
+                bg2 = BG2,
+                muted = MUTED,
+                border = BORDER
             )
         };
+
+        // Notes: each row spans 8 columns total (1 + 7)
         let notes: String = if self.notes.is_empty() {
-            // "<TD COLOR=\"#a0522d\"><I>Inventory is empty</I></TD>"
             "".to_string()
         } else {
-            format!("<HR/>{}", self.notes.iter().map(|(o,c)| format!("<TR><TD COLOR=\"#a0522d\" BORDER=\"1\" TITLE=\"Command\" ALIGN=\"RIGHT\" >{}</TD><TD COLOR=\"#a0522d\" BGCOLOR=\"#FBE5FF\" BORDER=\"1\" TITLE=\"Output\" ALIGN=\"LEFT\" >{}</TD></TR>", o, c)).collect::<String>())
+            let rows = self.notes.iter().map(|(o, c)| {
+                format!(
+                    r#"<TR>
+                     <TD WIDTH="120" ALIGN="RIGHT" BGCOLOR="{bg2}" BORDER="1" COLOR="{border}" TITLE="Command">
+                       <B><FONT COLOR="{purple}">{}</FONT></B>
+                     </TD>
+                     <TD COLSPAN="7" ALIGN="LEFT" BGCOLOR="{out_bg}" BORDER="1" COLOR="{border}" TITLE="Output">
+                       <FONT COLOR="{cyan}">{}</FONT>
+                     </TD>
+                   </TR>"#,
+                    o, c,
+                    bg2=BG2,
+                    out_bg="#1F201B",
+                    border=BORDER,
+                    purple=PURPLE,
+                    cyan=CYAN
+                )
+            }).collect::<String>();
+
+            format!(r#"<HR/>{}"#, rows)
         };
+
+        let message = self.message.replace('\n', "<BR/>");
+
         format!(
-            r#"shape="rect" style="rounded" label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0">
-                <TR><TD ALIGN="LEFT"><B>[{}]</B></TD><TD ALIGN="LEFT"><B>{}</B></TD><TD ALIGN="RIGHT"><I>Steps: {}</I></TD></TR>
-                <HR/>
-                <TR>{}</TR>
-                <HR/>
-                <TR><TD ALIGN="LEFT">{}</TD></TR>
-                {}
-            </TABLE>>"#,
-            self.id,
-            self.label,
-            self.steps,
-            inventory,
-            self.message.replace('\n', "<BR/>"),
-            notes
+            r###"shape="rect"
+style="rounded,filled"
+fillcolor="{bg}"
+color="{border}"
+penwidth="1.3"
+fontname="Inter"
+fontsize="10"
+margin="0.04,0.03"
+label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6" BGCOLOR="{bg}">
+
+  <TR>
+    <TD WIDTH="62" FIXEDSIZE="TRUE" ALIGN="CENTER" BGCOLOR="{bg2}">
+      <B><FONT COLOR="{magenta}">[{id}]</FONT></B>
+    </TD>
+    <TD COLSPAN="6" ALIGN="LEFT" BGCOLOR="{bg2}">
+      <B><FONT COLOR="{yellow}">{title}</FONT></B>
+    </TD>
+    <TD WIDTH="110" FIXEDSIZE="TRUE" ALIGN="RIGHT" BGCOLOR="{bg2}">
+      <I><FONT COLOR="{cyan}">Steps: {steps}</FONT></I>
+    </TD>
+  </TR>
+
+  <TR>
+    <TD COLSPAN="8" BGCOLOR="{border}" HEIGHT="1"></TD>
+  </TR>
+
+  <TR>{inventory}</TR>
+
+  <TR>
+    <TD COLSPAN="8" BGCOLOR="{border}" HEIGHT="1"></TD>
+  </TR>
+
+  <TR>
+    <TD COLSPAN="8" ALIGN="LEFT" BGCOLOR="{bg}">
+      <FONT COLOR="{text}">{message}</FONT>
+    </TD>
+  </TR>
+
+  {notes}
+
+</TABLE>>"###,
+            bg = BG,
+            bg2 = BG2,
+            border = BORDER,
+            text = TEXT,
+            magenta = MAGENTA,
+            yellow = YELLOW,
+            cyan = CYAN,
+            inventory = inventory,
+            notes = notes,
+            id = self.id,
+            title = self.label,
+            steps = self.steps,
+            message = message
         )
     }
 }

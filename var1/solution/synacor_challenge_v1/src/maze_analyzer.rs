@@ -1018,7 +1018,7 @@ impl MazeAnalyzer {
             "started automatic path finding with limit of {}",
             steps_limit
         );
-        // This enables rambling / serching path
+        // This enables rambling / searching path
         self.steps_left += steps_limit;
         //  self.commands_counter += 1; //To expect output
     }
