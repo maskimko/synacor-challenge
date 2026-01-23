@@ -240,6 +240,48 @@ impl DotGraph {
             &Self::get_edge_dot_attr,
             &Self::get_node_dot_attr,
         );
-        format!("{:?}", dot)
+        let mut s = format!("{:?}", dot);
+        // Inject right after the opening brace
+        const HEADER: &str = r##"
+  graph [
+    bgcolor="#272822",
+    rankdir=LR,
+    splines=true,          // curved lines (instead of squared)
+    nodesep=0.35,
+    ranksep=0.9,
+    pad=0.25,
+    newrank=true,
+    concentrate=false      // do not merge edges! To show backwards movements
+  ];
+  node  [
+    fontname="Inter",
+    fontsize=10,
+    shape=rect,
+    style="rounded,filled",
+    fillcolor="#2D2E27",
+    color="#75715E",
+    fontcolor="#F8F8F2",
+    penwidth=1.3
+  ];
+  edge  [
+    color="#66D9EF",
+    fontcolor="#F8F8F2",
+    penwidth=1.1,
+    arrowsize=0.75,
+    fontname="Inter",
+    fontsize=9,
+    // Helps separate A->B from B->A
+    // (a little "fan-out" for multiple edges between same nodes)
+    minlen=1
+  ];
+"##;
+
+        if let Some(pos) = s.find('{') {
+            // insert after "{\n" (or just after "{")
+            let insert_at = pos + 1;
+            s.insert_str(insert_at, HEADER);
+        }
+
+        s
     }
 }
