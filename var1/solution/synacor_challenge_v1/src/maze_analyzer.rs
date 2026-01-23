@@ -34,6 +34,7 @@ pub struct MazeAnalyzer {
     // Maps node complete, if all its edges are completed for particular inventory configuration
     // keys is computed inventory hash
     completed_nodes: HashMap<String, HashSet<RID>>,
+    incompleted_stack: Vec<RID>,
     last_visited_node: ORID,
     response_buffer: String,
     first: ORID,
@@ -209,6 +210,7 @@ impl MazeAnalyzer {
             last_node_id: None,
             output_is_available: false,
             checkpoint_nodes: Vec::new(),
+            incompleted_stack: vec![],
         }
     }
 
@@ -406,8 +408,14 @@ impl MazeAnalyzer {
         nm.origin = origin;
         nm.from = head_rid.as_ref().map(|hr| Rc::downgrade(&hr));
         nm.inv_snapshot = inv_snapshot;
+        let visits = nm.visits;
+        //  Visit edge of previous node
         if let Err(edge_err) = self.optional_visit_edge(&head_rid, command) {
             debug!("failed to visit edge: {}", edge_err);
+        }
+        // And add node to incomplete stack only when visited it for the first time
+        if visits  == 1 && !self.completed_nodes.get(&self.global_inventory_hash()).map(|hs| hs.contains(&new_rid)).is_some_and(|c| c) {
+            self.incompleted_stack.push(new_rid.clone())
         }
         if let Err(link_err) =
             self.link_nodes(new_rid.clone(), head_rid.as_ref().map(Rc::downgrade))
@@ -825,7 +833,7 @@ impl MazeAnalyzer {
             let visits = meta.visits;
             let visited_edges = meta.visited_edges.iter().map(|(k, v)| k ).filter(|e| e.starts_with("go")).collect::<Vec<_>>().len();
             let edges_num  = node.exits.len();
-            let edges: HashMap<String, bool> = node.exits.iter().map(|e| (e.clone(), meta.visited_edges.contains_key(e))).collect();
+            let edges: HashMap<String, bool> = node.exits.iter().map(|e| (e.clone(), meta.visited_edges.contains_key(e)|| meta.visited_edges.contains_key(&format!("go {}",e)))).collect();
             let mut gn: DotGraphNode = dot_graph::DotGraphNode::new(
                 meta.id,
                 node.title.clone(),
@@ -954,29 +962,21 @@ impl MazeAnalyzer {
         node: &ORID,
         command: Option<CommandType>,
     ) -> Result<(), String> {
-        let n = node
-            .clone()
-            .ok_or("no node was provided for this command")?;
-        let cmd: String = command
-            .map(|c| c.to_string())
-            .ok_or("command is none. Cannot visit edge.".to_string())?;
+        let n = node .clone() .ok_or("no node was provided for this command")?;
+        let cmd: String = command .map(|c| c.to_string()) .ok_or("command is none. Cannot visit edge.".to_string())?;
         self.visit_edge(&n, &cmd);
         Ok(())
     }
     fn visit_edge(&mut self, node: &RID, command: &str) {
         if let Some(n_meta) = self.get_node_meta_mut(node) {
             n_meta.edges_to_visit.retain(|c| c != command);
-            let visits = n_meta.visited_edges.get(command).unwrap_or(&0) + 1;
-            n_meta.visited_edges.insert(command.to_string(), visits);
+            *n_meta.visited_edges.entry(command.to_string()).or_insert(0) += 1;
             n_meta.last_visited_edge = Some(command.to_string());
             //Complete node
-            if !n_meta
-                .edges_to_visit
-                .iter()
-                .any(|e| matches!(CommandType::command_type(e), CommandType::Move(_)))
+            if !n_meta .edges_to_visit .iter() .any(|e| matches!(CommandType::command_type(e), CommandType::Move(_)))
             {
-                self.complete_node(node);
-            }
+                self.complete_node(node); }
+            // TODO: Think about how to complete the edge (in case of all nodes from this edge are completed...
         }
     }
 
@@ -985,19 +985,27 @@ impl MazeAnalyzer {
     }
 
     fn complete_node(&mut self, node: &RID) {
+        // TODO: Think about how to iclude pick up ("take" op) to the completed condition
         let inv_hash = self.global_inventory_hash();
-        let prev = self.get_prev_node(node);
-        let prev_completed = prev.is_none()
-            || self
-                .completed_nodes
-                .get(&inv_hash)
-                .map(|h| h.contains(&prev.unwrap()))
-                .is_some_and(|b| b);
-        if prev_completed {
-            self.completed_nodes
-                .entry(inv_hash)
-                .or_insert(HashSet::new())
-                .insert(node.clone());
+        // let prev = self.get_prev_node(node);
+        // Actually it is wrong. There should be completed stack
+        // If the node on stack is completed for the current step, then mark it completed for the current inventory hash and then go to previous one
+        // let prev_completed = prev.is_none()
+        //     || self
+        //         .completed_nodes
+        //         .get(&inv_hash)
+        //         .map(|h| h.contains(&prev.unwrap()))
+        //         .is_some_and(|b| b);
+        // if prev_completed {
+        //     self.completed_nodes
+        //         .entry(inv_hash)
+        //         .or_insert(HashSet::new())
+        //         .insert(node.clone());
+        // }
+        if !self.completed_nodes.get(&inv_hash).is_some_and(|hs| hs.contains(node)) && self.incompleted_stack.last().eq(&Some(node)){
+            debug!("completed node {}", node);
+           self.incompleted_stack.pop();
+            self.completed_nodes.entry(inv_hash).or_insert(HashSet::new()).insert(node.clone());
         }
     }
 
