@@ -130,68 +130,6 @@ impl ResponseId {
         }
     }
 }
-//
-// #[derive(Derivative)]
-// #[derivative(Debug, PartialEq, Eq, Hash)]
-// struct Node {
-//     response: RID,
-//     #[derivative(PartialEq = "ignore")]
-//     #[derivative(Hash = "ignore")]
-//     previous:ORID,
-//     #[derivative(PartialEq = "ignore")]
-//     #[derivative(Hash = "ignore")]
-//     come_from: OWID,
-//     // Commands to execute
-//     #[derivative(PartialEq = "ignore")]
-//     #[derivative(Hash = "ignore")]
-//     steps: u16,
-//     id: u16,
-// }
-//
-// #[deprecated]
-// impl Node {
-//     fn new(id: u16, response: ResponseParts) -> Self {
-//         Node {
-//             response: response.into(),
-//             steps: u16::MAX,
-//             previous: None,
-//             id,
-//             come_from: None,
-//         }
-//     }
-// #[deprecated]
-// fn new_with_prev(id: u16, mut response: ResponseParts, previous: ORID) -> Self {
-//     match previous {
-//         Some(prev) => {
-//             let steps = prev.borrow().steps + 1;
-//             let items = prev.borrow().response.inventory.clone();
-//             response.inventory = items;
-//             let node = Node {
-//                 steps,
-//                 previous: Some(prev),
-//                 ..Self::new(id, response)
-//             };
-//             node
-//         }
-//         None => Self::new(id, response),
-//     }
-// }
-//
-//     #[deprecated]
-//     fn response(&self) -> RID {
-//         self.response.clone()
-//     }
-//
-//     fn previous(&self) -> ORID {
-//         self.previous.clone()
-//     }
-// }
-//
-// impl fmt::Display for Node {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         writeln!(f, "   |{:?} steps: {}", self.response, self.steps)
-//     }
-// }
 
 #[derive(Debug, Clone)]
 pub enum CommandType {
@@ -317,27 +255,6 @@ impl MazeAnalyzer {
         });
         Some(())
     }
-    // replace_head is used after setting inventory only
-    // #[deprecated]
-    // fn replace_head(&mut self, new_response: ResponseParts) -> Result<(), Box<dyn Error>> {
-    //     let head = self.head.clone().ok_or("no head")?;
-    //     // Replace head
-    //     let mut new_node = Node {
-    //         response: Rc::new(new_response),
-    //         steps: head.borrow().steps+1,
-    //         previous: head.borrow().previous().clone(),
-    //         id: head.borrow().id,
-    //         come_from: head.borrow().come_from.clone()
-    //     };
-    //     self.head = Some(Rc::new(RefCell::new(new_node)));
-    //     if head.borrow().previous().is_none() {
-    //         self.first = self.head.clone();
-    //     }
-    //     // move meta as well
-    //     let corresponding_meta = self.nodes.remove(&head.borrow().response());
-    //     self.nodes.insert(self.head.clone().unwrap().borrow().response(), corresponding_meta.unwrap());
-    //     Ok(())
-    // }
 
     fn save_checkpoint(&mut self, node: RID) {
         debug!("save checkpoint {}", node);
@@ -346,7 +263,8 @@ impl MazeAnalyzer {
             Some(m) => {
                 let commands = self
                     .get_full_path_back()
-                    .into_iter().rev()
+                    .into_iter()
+                    .rev()
                     .map(|(_, _, cmd)| cmd)
                     .map(|cmd| cmd.unwrap_or("START".cyan().to_string()))
                     .collect::<Vec<String>>()
@@ -354,7 +272,9 @@ impl MazeAnalyzer {
                 eprintln!("Commands: to node {}: {}", m.id, commands.yellow());
             }
             None => {
-                warn!("checkpoint at initial node, though at least one starting position should be returned. Probably this is a bug. ");
+                warn!(
+                    "checkpoint at initial node, though at least one starting position should be returned. Probably this is a bug. "
+                );
             }
         }
     }
@@ -440,12 +360,6 @@ impl MazeAnalyzer {
             }
         }
         let head = self.head.clone().ok_or("no head")?;
-
-        // let visits =self.visit_node(head)?;
-        // debug!("node has {} visits", visits);
-
-        // let mut n_meta = self .nodes .remove(&head.borrow().response()) .ok_or::<String>("no node metadata".into())?;
-        // self.nodes .insert(self.head.clone().unwrap().borrow().response(), n_meta);
         self.flush();
         self.commands_counter += 1;
         Ok(())
@@ -461,7 +375,6 @@ impl MazeAnalyzer {
         mut resp_parts: ResponseParts,
         command: Option<CommandType>,
     ) -> Result<(), Box<dyn Error>> {
-        // debug!("moving {}", destination);
         let is_start_of_graph = self.head.is_none();
         debug!("moving to next node");
         let head_rid = self.head.clone();
@@ -479,7 +392,7 @@ impl MazeAnalyzer {
         let mut nm = self
             .get_node_meta_mut(&new_rid)
             .expect("at this point new node metadata must be present");
-        let origin = if nm.min_steps < head_steps+1 {
+        let origin = if nm.min_steps < head_steps + 1 {
             nm.origin.clone()
         } else {
             head_rid.clone()
@@ -488,18 +401,12 @@ impl MazeAnalyzer {
         nm.min_steps = min(nm.min_steps, head_steps + 1);
         nm.origin = origin;
         nm.from = head_rid.as_ref().map(|hr| Rc::downgrade(&hr));
-
-        // TODO: Use from
-        // let from = self.head.clone().map(|r| Rc::downgrade(&r));
-        // self.pass_inventory(&mut resp_parts);
-
-        // let new_node = Node { previous, id, steps, response: resp_parts.into(), come_from: from, };
-        // head_rid.as_ref()
-        //     .map(|h| command.map(|c| self.visit_edge(&h, c.to_string().as_str())));
         if let Err(edge_err) = self.optional_visit_edge(&head_rid, command) {
             debug!("failed to visit edge: {}", edge_err);
         }
-        if let Err(link_err)  = self.link_nodes(new_rid.clone(), head_rid.as_ref().map(Rc::downgrade)) {
+        if let Err(link_err) =
+            self.link_nodes(new_rid.clone(), head_rid.as_ref().map(Rc::downgrade))
+        {
             debug!("linking error: {:?}", link_err);
         }
 
@@ -509,12 +416,6 @@ impl MazeAnalyzer {
         }
         Ok(())
     }
-    // #[deprecated]
-    // fn pass_inventory(&self, resp_parts: &mut ResponseParts) {
-    //     if self.head.is_some() {
-    //        self.head.as_ref().map(|h| h.borrow().response.inventory.clone()).map(|inv| resp_parts.inventory.extend(inv.into_iter()));
-    //     }
-    // }
     fn drop_from_inventory(&mut self, item: &str) -> Option<(u16, u16)> {
         self.inventory_global.remove(item)
     }
@@ -533,41 +434,6 @@ impl MazeAnalyzer {
         });
         Ok(false)
     }
-    // pub fn get_short_path_back(&self) -> Vec<(u16, String, Option<String>)> {
-    //     // TODO: rewrite it with using origin instead of previous
-    //     let mut path: Vec<(u16, String, Option<String>)> = vec![];
-    //     let mut current_meta = self.nodes.get(&self.head.unwrap().borrow().response);
-    //     let mut cmd: Option<String> = None;
-    //     while let Some(node_meta) = current_meta {
-    //         match node_meta.origin {
-    //             Some(prev) => {
-    //                 let prev_meta = self
-    //                     .nodes
-    //                     .get(&prev.borrow().response())
-    //                     .expect("previous meta is absent, however the previous node exists");
-    //                 let causing_edge = prev_meta
-    //                     .response_2_edge
-    //                     .get(node_meta.)
-    //                     .cloned();
-    //                 path.push((
-    //                     node.borrow().id,
-    //                     node.borrow().response().message.clone(),
-    //                     cmd.clone(),
-    //                 ));
-    //                 cmd = causing_edge;
-    //             }
-    //             None => {
-    //                 path.push((
-    //                     node.borrow().id,
-    //                     node.borrow().response().message.clone(),
-    //                     cmd.clone(),
-    //                 ));
-    //             }
-    //         }
-    //         current = node.borrow().previous.clone();
-    //     }
-    //     path
-    // }
     pub fn get_full_path_back(&self) -> Vec<(u16, String, Option<String>)> {
         let mut path: Vec<(u16, String, Option<String>)> = vec![];
         let mut current = self.head.clone();
@@ -819,8 +685,6 @@ impl MazeAnalyzer {
         } else if let Some(cmd) = self.get_next_edge(node, visits_limit) {
             self.commands_queue.push_front(cmd);
             Ok(())
-        // } else if !self.commands_queue.is_empty()  {
-        //     Ok(())
         } else {
             // Try to return to previous
             match self.get_command_back_to_previous(node) {
@@ -849,46 +713,16 @@ impl MazeAnalyzer {
             return Err("from argument does not have strong references".into());
         }
         let f_rid = fid.upgrade().ok_or("failed to upgrade weak ref")?;
-        let f_meta = self.get_node_meta_mut(&f_rid).ok_or("previous node metadata was not found")?;
-        let original_edge  = f_meta.last_visited_edge.clone().ok_or("no visited edges")?;
-        // let original_edge = self
-        //     .nodes
-        //     .get(&from.response())
-        //     .ok_or("no node metadata")?
-        //     .last_visited_edge
-        //     .clone()
-        //     .ok_or("no visited edges")?;
-       f_meta.response_2_edge.insert(node.clone(), original_edge.clone());
+        let f_meta = self
+            .get_node_meta_mut(&f_rid)
+            .ok_or("previous node metadata was not found")?;
+        let original_edge = f_meta.last_visited_edge.clone().ok_or("no visited edges")?;
+        f_meta
+            .response_2_edge
+            .insert(node.clone(), original_edge.clone());
         f_meta.edge_2_response.insert(original_edge.clone(), node);
-        // self.nodes
-        //     .entry(from.response())
-        //     .and_modify(|prev_meta| {
-        //         prev_meta
-        //             .response_2_edge
-        //             .insert(resp.clone(), original_edge.clone());
-        //         prev_meta
-        //             .edge_2_response
-        //             .insert(original_edge, resp.clone());
-        //     });
         Ok(())
     }
-    // #[deprecated]
-    // fn link_previous(&mut self, node: Rc<RefCell<Node>>) -> Result<u16, String> {
-    //     let prev = node.borrow().previous().ok_or("No previous node")?;
-    //     let from = node.borrow().come_from.clone();
-    //     if let Some(from_nod_ref) = from.map(|f| f.upgrade()).flatten() {
-    //         let weak_link_result  = self.link_nodes(node.clone(), from_nod_ref.borrow());
-    //         trace!("result of linking the node we came from: {:?}", weak_link_result);
-    //     }
-    //     if node.borrow().steps < prev.borrow().steps {
-    //         return Err(
-    //             "won't overwrite previous node, because current node has less steps than previous"
-    //                 .into(),
-    //         );
-    //     }
-    //     self.link_nodes(node, prev.borrow())?;
-    //     Ok(prev.borrow().steps)
-    // }
     /// Creates node metadata or increments visits counter
     fn visit_node(&mut self, response: ResponseParts) -> Result<RID, String> {
         let rid = (&response).into();
@@ -916,14 +750,6 @@ impl MazeAnalyzer {
             .visits += 1;
         self.last_visited_node = Some(rid.clone());
         Ok(rid)
-        // link previous
-        // let link_result = self.link_previous(node.clone());
-        // trace!("Link result: {:?}", link_result);
-        // Ok(self
-        //     .nodes
-        //     .get(&node.borrow().response())
-        //     .map(|m| m.visits)
-        //     .unwrap_or(0))
     }
 
     fn get_node_meta_id(&mut self) -> u16 {
@@ -942,11 +768,6 @@ impl MazeAnalyzer {
         if self.inventory_global.get("lit lantern").is_some() {
             return false;
         }
-        // if node .borrow() .response() .inventory
-        //     .contains(&"lit lantern".to_string())
-        // {
-        //     return false;
-        // }
         // Check for grues
         if node.message.contains("likely to be eaten by a") {
             return Self::analyse_dangerous_direction(&node.message, &command)
@@ -1118,9 +939,17 @@ impl MazeAnalyzer {
         completed_node
     }
 
-    fn optional_visit_edge(&mut self, node: &ORID, command: Option<CommandType>) -> Result<(), String> {
-       let n = node.clone().ok_or("no node was provided for this command")?;
-        let cmd: String = command.map(|c| c.to_string()).ok_or("command is none. Cannot visit edge.".to_string())?;
+    fn optional_visit_edge(
+        &mut self,
+        node: &ORID,
+        command: Option<CommandType>,
+    ) -> Result<(), String> {
+        let n = node
+            .clone()
+            .ok_or("no node was provided for this command")?;
+        let cmd: String = command
+            .map(|c| c.to_string())
+            .ok_or("command is none. Cannot visit edge.".to_string())?;
         self.visit_edge(&n, &cmd);
         Ok(())
     }
@@ -1154,25 +983,12 @@ impl MazeAnalyzer {
                 .get(&inv_hash)
                 .map(|h| h.contains(&prev.unwrap()))
                 .is_some_and(|b| b);
-        // let prev_is_completed = prev
-        //     .map(|pr| {
-        //         self.completed_nodes
-        //             .get(&inv_hash)
-        //             .map(|completed| completed.contains(&pr.borrow().response()))
-        //     })
-        //     .flatten();
         if prev_completed {
             self.completed_nodes
                 .entry(inv_hash)
                 .or_insert(HashSet::new())
                 .insert(node.clone());
         }
-        // if prev_is_completed.unwrap_or(false) || !self.previous_is_accessible(node.clone()) {
-        //     self.completed_nodes
-        //         .entry(inv_hash)
-        //         .or_insert(HashSet::new())
-        //         .insert(node.borrow().response());
-        // }
     }
 
     /// This function should traverse the maze and find the best route to the exit
@@ -1184,14 +1000,10 @@ impl MazeAnalyzer {
         }
         let node = self.head.clone().unwrap();
         self.validate_steps_left(&node)?;
-        // let node_visits = self.visit_node(node.clone())?;
-        // trace!("node visited {} times", node_visits);
         const VISITS_LIMIT_PER_EDGE: u16 = 25;
         self.enqueue_commands(&node, VISITS_LIMIT_PER_EDGE)?;
         // We pop exactly 1 command, because new node will give other commands
         if let Some(cmd) = self.commands_queue.pop_front() {
-            // I will visit on the dispatch phase, to allow building graph even without the solver running
-            // self.visit_edge(node, &cmd);
             cmd.chars().for_each(|c| replay_buf.push_back(c));
             replay_buf.push_back('\n');
             self.last_command_num = self.commands_counter;
@@ -1209,20 +1021,5 @@ impl MazeAnalyzer {
         // This enables rambling / serching path
         self.steps_left += steps_limit;
         //  self.commands_counter += 1; //To expect output
-    }
-    #[deprecated(note = "use search method directly instead")]
-    pub fn ramble(&mut self, replay_buf: &mut VecDeque<char>) {
-        if self.expect_output() {
-            match self.search(replay_buf) {
-                Ok(_) => {
-                    debug!("search round finished successfully")
-                }
-                Err(e) => {
-                    self.steps_left = 0;
-                    self.last_command_num = self.commands_counter;
-                    eprintln!("search failed: {}", e)
-                }
-            }
-        }
     }
 }
