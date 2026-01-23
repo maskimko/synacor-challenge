@@ -71,6 +71,7 @@ struct NodeMetadata {
     auxiliary_commands: HashMap<String, String>,
     // IDEA: probably add here last response, or even response history to store the visited responses
     last_response: ResponseParts,
+    inv_snapshot: Vec<String>
 }
 
 /// This struct is designed to immutable representation of the graph node identity
@@ -308,6 +309,7 @@ impl MazeAnalyzer {
                     let things = &last_response.things_of_interest;
                     things.iter().for_each(|i| self.add_to_inventory(i.clone()));
                     self.set_aux_commands(resp_parts.pretext, command);
+                    self.get_node_meta_mut(&head).map(|h| h.inv_snapshot.push(item));
                     self.inventory_needs_update = true;
                 }
                 Some(CommandType::InventoryDrop(item)) => {
@@ -377,6 +379,8 @@ impl MazeAnalyzer {
     ) -> Result<(), Box<dyn Error>> {
         let is_start_of_graph = self.head.is_none();
         debug!("moving to next node");
+
+        let inv_snapshot=self.inventory_global.keys().cloned().collect::<Vec<String>>();
         let head_rid = self.head.clone();
         let head_steps_fallback_value = 0;
 
@@ -401,6 +405,7 @@ impl MazeAnalyzer {
         nm.min_steps = min(nm.min_steps, head_steps + 1);
         nm.origin = origin;
         nm.from = head_rid.as_ref().map(|hr| Rc::downgrade(&hr));
+        nm.inv_snapshot = inv_snapshot;
         if let Err(edge_err) = self.optional_visit_edge(&head_rid, command) {
             debug!("failed to visit edge: {}", edge_err);
         }
@@ -746,6 +751,7 @@ impl MazeAnalyzer {
                 edge_2_response: HashMap::new(),
                 last_response: response,
                 auxiliary_commands: HashMap::new(),
+                inv_snapshot: vec![],
             })
             .visits += 1;
         self.last_visited_node = Some(rid.clone());
@@ -815,18 +821,22 @@ impl MazeAnalyzer {
         let mut mapping: HashMap<RID, DotGraphNode> = HashMap::new();
         self.nodes.iter().for_each(|(node, meta)| {
             let notes = &meta.auxiliary_commands;
-            let inv = self
-                .inventory_global
-                .keys()
-                .map(String::as_str)
-                .collect::<Vec<&str>>();
+            let inv = meta.inv_snapshot.clone();
+            let visits = meta.visits;
+            let visited_edges = meta.visited_edges.iter().map(|(k, v)| k ).filter(|e| e.starts_with("go")).collect::<Vec<_>>().len();
+            let edges_num  = node.exits.len();
+            let edges: HashMap<String, bool> = node.exits.iter().map(|e| (e.clone(), meta.visited_edges.contains_key(e))).collect();
             let mut gn: DotGraphNode = dot_graph::DotGraphNode::new(
                 meta.id,
                 node.title.clone(),
                 node.message.clone(),
                 meta.min_steps,
-                inv.as_slice(),
+                inv,
                 notes,
+                visits,
+                visited_edges as u16,
+                edges_num as u16,
+                edges
             );
             gn = graph.add_node(gn);
             mapping.insert(node.clone(), gn);

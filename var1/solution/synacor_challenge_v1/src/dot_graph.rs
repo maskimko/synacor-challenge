@@ -13,6 +13,10 @@ pub struct DotGraphNode {
     steps: u16,
     notes: HashMap<String, String>,
     index: Option<NodeIndex>,
+    visits: u16,
+    visited_edges_num: u16,
+    edges_num:  u16,
+    edges: HashMap<String,bool> //shows visited edges
 }
 
 impl DotGraphNode {
@@ -21,8 +25,12 @@ impl DotGraphNode {
         title: String,
         message: String,
         steps: u16,
-        inventory: &[&str],
+        inventory: Vec<String>,
         notes: &HashMap<String, String>,
+        visits: u16,
+        visited_edges_num: u16,
+        edges_num:  u16,
+        edges: HashMap<String,bool>
     ) -> DotGraphNode {
         DotGraphNode {
             id,
@@ -30,8 +38,12 @@ impl DotGraphNode {
             steps,
             label: title,
             index: None,
-            inventory: inventory.iter().map(|s| s.to_string()).collect(),
+            inventory,
             notes: notes.clone(),
+            visits,
+            visited_edges_num,
+            edges_num,
+            edges,
         }
     }
 
@@ -57,6 +69,9 @@ impl DotGraphNode {
         const GREEN: &str = "#A6E22E"; // inventory items
         const PURPLE: &str = "#AE81FF"; // command
         const ORANGE: &str = "#FD971F"; // optional accent
+        const BLUE_V_EDGE: &str = "#a358FF"; // for visited edges
+        const BLUE_EDGE: &str = "#9378FF"; // for edges
+        const RED_INCOMPLETE : &str = "#FC5345"; //To mark incomplete node
 
         // Inventory row always spans 8 columns total (1 + 7)
         let inventory: String = if self.inventory.is_empty() {
@@ -131,8 +146,44 @@ impl DotGraphNode {
             format!(r#"<HR/>{}"#, rows)
         };
 
+
+        let exits: String = if self.edges.is_empty() {
+            "".to_string()
+        } else {
+            let rows = self.edges.iter().map(|(o, c)| {
+                let visited_color = if *c {
+                    TEXT
+                } else {
+                    RED_INCOMPLETE
+                };
+                format!(
+                    r#"<TR>
+                     <TD WIDTH="120" ALIGN="RIGHT" BGCOLOR="{bg2}" BORDER="1" COLOR="{border}" TITLE="Exit">
+                       <B><FONT COLOR="{yellow}">{}</FONT></B>
+                     </TD>
+                     <TD COLSPAN="7" ALIGN="LEFT" BGCOLOR="{out_bg}" BORDER="1" COLOR="{border}" TITLE="Visited">
+                       <FONT COLOR="{visited_color}">{}</FONT>
+                     </TD>
+                   </TR>"#,
+                    o, c,
+                    bg2=BG2,
+                    out_bg="#1F201B",
+                    border=BORDER,
+                    yellow=YELLOW,
+                    visited_color=visited_color,
+                )
+            }).collect::<String>();
+
+            format!(r#"<HR/><TR><TD COLSPAN="8" ALIGN="CENTER">Exits</TD></TR>{}"#, rows)
+        };
+
         let message = self.message.replace('\n', "<BR/>");
 
+        let visited_title_color: &str = if self.visited_edges_num == self.edges_num {
+            TEXT
+        } else {
+            RED_INCOMPLETE
+        };
         format!(
             r###"shape="rect"
 style="rounded,filled"
@@ -140,19 +191,25 @@ fillcolor="{bg}"
 color="{border}"
 penwidth="1.3"
 fontname="Inter"
-fontsize="10"
+fontsize="25"
 margin="0.04,0.03"
 label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6" BGCOLOR="{bg}">
 
   <TR>
-    <TD WIDTH="62" FIXEDSIZE="TRUE" ALIGN="CENTER" BGCOLOR="{bg2}">
+    <TD WIDTH="62" ALIGN="CENTER" BGCOLOR="{bg2}">
       <B><FONT COLOR="{magenta}">[{id}]</FONT></B>
     </TD>
     <TD COLSPAN="6" ALIGN="LEFT" BGCOLOR="{bg2}">
       <B><FONT COLOR="{yellow}">{title}</FONT></B>
     </TD>
-    <TD WIDTH="110" FIXEDSIZE="TRUE" ALIGN="RIGHT" BGCOLOR="{bg2}">
+    <TD WIDTH="110" ALIGN="RIGHT" BGCOLOR="{bg2}">
       <I><FONT COLOR="{cyan}">Steps: {steps}</FONT></I>
+    </TD>
+    <TD WIDTH="110" ALIGN="RIGHT" BGCOLOR="{bg2}">
+      <I><FONT COLOR="{orange}">Visits: {visits}</FONT></I>
+    </TD>
+    <TD WIDTH="110" ALIGN="RIGHT" BGCOLOR="{bg2}">
+      <I><FONT COLOR="{visit_title}">Visited edges: </FONT></I>(<FONT COLOR="{blue_visited}">{visited_num}</FONT>/<FONT COLOR="{blue_edges}">{edges_num}</FONT>)
     </TD>
   </TR>
 
@@ -173,6 +230,7 @@ label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6" BGCOLOR=
   </TR>
 
   {notes}
+  {exits}
 
 </TABLE>>"###,
             bg = BG,
@@ -181,13 +239,21 @@ label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="6" BGCOLOR=
             text = TEXT,
             magenta = MAGENTA,
             yellow = YELLOW,
+            orange = ORANGE,
             cyan = CYAN,
             inventory = inventory,
             notes = notes,
             id = self.id,
             title = self.label,
             steps = self.steps,
-            message = message
+            visits = self.visits,
+            blue_visited = BLUE_V_EDGE,
+            blue_edges = BLUE_EDGE,
+            visited_num = self.visited_edges_num,
+            edges_num = self.edges_num,
+            visit_title = visited_title_color,
+            message = message,
+            exits = exits,
         )
     }
 }
@@ -255,7 +321,7 @@ impl DotGraph {
   ];
   node  [
     fontname="Inter",
-    fontsize=10,
+    fontsize=20,
     shape=rect,
     style="rounded,filled",
     fillcolor="#2D2E27",
@@ -269,7 +335,7 @@ impl DotGraph {
     penwidth=1.1,
     arrowsize=0.75,
     fontname="Inter",
-    fontsize=9,
+    fontsize=15,
     // Helps separate A->B from B->A
     // (a little "fan-out" for multiple edges between same nodes)
     minlen=1
