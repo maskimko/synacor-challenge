@@ -140,30 +140,47 @@ impl fmt::Debug for Data {
 fn print_slash_command_help() {
     eprintln!("{}", "*** Available slash '/' commands: ***".green());
     eprintln!("{:15} - {}", "/help".yellow(), "show this help");
-    eprintln!("{:15} - {}", "/show_replay".yellow(), "show replay commands");
+    eprintln!(
+        "{:15} - {}",
+        "/show_replay".yellow(),
+        "show replay commands"
+    );
     eprintln!("{:15} - {}", "/show_state".yellow(), "show state of the VM");
     eprintln!(
         "{:15} - {}",
-        "/dump_state".yellow(), "save VM state information to file"
+        "/dump_state".yellow(),
+        "save VM state information to file"
     );
     eprintln!("{:15} - {}", "/dump_memory".yellow(), "save VM RAM to file");
-    eprintln!("{:15} - {}", "/show_history".yellow(), "show commands history");
     eprintln!(
         "{:15} - {}",
-        "/save_history".yellow(), "save commands history to file"
-    );
-    eprintln!("{:15} - {}", "/record_output".yellow(), "start output recording");
-    eprintln!(
-        "{:15} - {}",
-        "/solve".yellow(), "steps limit] - start automatic path search (Default steps limit is 100)"
+        "/show_history".yellow(),
+        "show commands history"
     );
     eprintln!(
         "{:15} - {}",
-        "/show_path".yellow(), "show the shortest path back to start"
+        "/save_history".yellow(),
+        "save commands history to file"
     );
     eprintln!(
         "{:15} - {}",
-        "/dump_dot".yellow(), "dump visited noded graph in the .dot format to file"
+        "/record_output".yellow(),
+        "start output recording"
+    );
+    eprintln!(
+        "{:15} - {}",
+        "/solve".yellow(),
+        "steps limit] - start automatic path search (Default steps limit is 100)"
+    );
+    eprintln!(
+        "{:15} - {}",
+        "/show_path".yellow(),
+        "show the shortest path back to start"
+    );
+    eprintln!(
+        "{:15} - {}",
+        "/dump_dot".yellow(),
+        "dump visited noded graph in the .dot format to file"
     );
 }
 
@@ -411,7 +428,7 @@ impl<'b> aux::Commander<'b> for VM {
                         self.maze_analyzer.solve(steps);
                     }
                     "/show_path" => {
-                       let path = self.maze_analyzer.get_full_path_back();
+                        let path = self.maze_analyzer.get_full_path_back();
                         if path.is_empty() {
                             eprintln!(
                                 "no path back was recorded yet. First you need to advance in the maze"
@@ -439,9 +456,12 @@ impl<'b> aux::Commander<'b> for VM {
                         let dot_graph_file = PathBuf::from("maze.dot");
                         match self.dump_dot(&dot_graph_file) {
                             Err(st_err) => eprintln!("{}", st_err),
-                            Ok(()) => eprintln!("graph has been successfully saved to {}", dot_graph_file.display()),
+                            Ok(()) => eprintln!(
+                                "graph has been successfully saved to {}",
+                                dot_graph_file.display()
+                            ),
                         }
-                    },
+                    }
                     user_command => {
                         return Err(format!("unsupported slash command {}", user_command).into());
                     }
@@ -519,8 +539,8 @@ impl VM {
 
     fn dump_dot(&self, dot_graph_file: &Path) -> Result<(), Box<dyn Error>> {
         trace!("dumping graph to {}", dot_graph_file.display());
-        let content  = self.maze_analyzer.export_dot_graph()?;
-            std::fs::write(dot_graph_file, content)?;
+        let content = self.maze_analyzer.export_dot_graph()?;
+        std::fs::write(dot_graph_file, content)?;
         Ok(())
     }
     fn get_registers_info(&self, indent: usize) -> String {
@@ -1175,8 +1195,7 @@ impl VM {
     }
 
     fn process_command(&mut self) -> Result<bool, Box<dyn Error>> {
-
-       // TODO: merge it with add_response
+        // TODO: merge it with add_response
 
         // Only next 'enter' should be processed
         let mut do_jump = true; // By default we jump
@@ -1189,15 +1208,21 @@ impl VM {
         let command = self.get_command_from_buffer();
         trace!("processing command {:?}", command);
         match command.clone() {
-            CommandType::Slash(cmd) => {
-                match self.process_slash_command(command) {
-                   Ok(()) =>  {do_jump = false; },
-                    Err(e) => {
-                        info!("{}", e);
-                        eprintln!("{}, please try again.\nType {} to get help on slash commands\nType {} to get help on VM commands", e.to_string().red(), "/help".yellow(), "help".green() );
-                        do_jump = false; },
+            CommandType::Slash(cmd) => match self.process_slash_command(command) {
+                Ok(()) => {
+                    do_jump = false;
                 }
-            }
+                Err(e) => {
+                    info!("{}", e);
+                    eprintln!(
+                        "{}, please try again.\nType {} to get help on slash commands\nType {} to get help on VM commands",
+                        e.to_string().red(),
+                        "/help".yellow(),
+                        "help".green()
+                    );
+                    do_jump = false;
+                }
+            },
             CommandType::Empty => {
                 //Let do nothing
                 do_jump = false;
@@ -1293,17 +1318,23 @@ impl VM {
     fn solver_search_hook(&mut self) -> Result<bool, Box<dyn Error>> {
         if self.maze_analyzer.is_rambling() && self.current_command_buf.is_empty() {
             match self.maze_analyzer.search(&mut self.replay_buffer)? {
-                true => { eprintln!("the solution has been found"); Ok(true) } ,
-                false => { debug!("search round finished successfully, without solution");Ok(false)},
+                true => {
+                    eprintln!("the solution has been found");
+                    Ok(true)
+                }
+                false => {
+                    debug!("search round finished successfully, without solution");
+                    Ok(false)
+                }
             }
         } else {
             Ok(false)
         }
     }
     fn solver_response_hook(&mut self) -> Result<(), Box<dyn Error>> {
-        if ! self.maze_analyzer.output_is_available() {
+        if !self.maze_analyzer.output_is_available() {
             trace!("maze_analyzer is waiting for output to become available");
-           return Ok(());
+            return Ok(());
         }
         let last_command = self
             .commands_history
@@ -1316,12 +1347,27 @@ impl VM {
     fn read_in(&mut self, a: Address) {
         debug!("{} {}: {}", &self.current_address, "in".magenta(), &a);
         // First of all we need to process the previous response
-        let response_hook_success = self.solver_response_hook().map_err(|e| {warn!("solver_response_hook failed: {}", e); e}).is_ok();
-        if response_hook_success { debug!("solver_response_hook succeeded");
+        let response_hook_success = self
+            .solver_response_hook()
+            .map_err(|e| {
+                warn!("solver_response_hook failed: {}", e);
+                e
+            })
+            .is_ok();
+        if response_hook_success {
+            debug!("solver_response_hook succeeded");
             self.maze_analyzer.mark_output_consumed();
         }
-        let search_hook_success = self.solver_search_hook().map_err(|e| {warn!("solver_search_hook failed: {}", e); e}).is_ok();
-        if search_hook_success { debug!("solver_search_hook succeeded"); }
+        let search_hook_success = self
+            .solver_search_hook()
+            .map_err(|e| {
+                warn!("solver_search_hook failed: {}", e);
+                e
+            })
+            .is_ok();
+        if search_hook_success {
+            debug!("solver_search_hook succeeded");
+        }
         // Then we would like to read commands from the replay buffer, if there are any available.
         let c: u8 = match self.replay_buffer.pop_front() {
             Some(replay_char) => {
