@@ -7,7 +7,7 @@ pub struct OutputParser<'a> {
     response: &'a str,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct ResponseParts {
     pub pretext: String,
     pub title: String,
