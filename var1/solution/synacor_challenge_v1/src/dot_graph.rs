@@ -16,7 +16,7 @@ pub struct DotGraphNode {
     visits: u16,
     visited_edges_num: u16,
     edges_num:  u16,
-    edges: HashMap<String,bool> //shows visited edges
+    edges: HashMap<String, u16> //shows visited edges
 }
 
 impl DotGraphNode {
@@ -30,7 +30,7 @@ impl DotGraphNode {
         visits: u16,
         visited_edges_num: u16,
         edges_num:  u16,
-        edges: HashMap<String,bool>
+        edges: HashMap<String,u16>
     ) -> DotGraphNode {
         DotGraphNode {
             id,
@@ -151,7 +151,7 @@ impl DotGraphNode {
             "".to_string()
         } else {
             let rows = self.edges.iter().map(|(o, c)| {
-                let visited_color = if *c {
+                let visited_color = if *c > 0 {
                     TEXT
                 } else {
                     RED_INCOMPLETE

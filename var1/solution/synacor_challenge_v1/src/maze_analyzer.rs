@@ -3,7 +3,7 @@ use clap::{Command, command};
 use derivative::Derivative;
 use log::{debug, trace, warn};
 use std::cell::RefCell;
-use std::cmp::min;
+use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt::Formatter;
@@ -833,7 +833,7 @@ impl MazeAnalyzer {
             let visits = meta.visits;
             let visited_edges = meta.visited_edges.iter().map(|(k, v)| k ).filter(|e| e.starts_with("go")).collect::<Vec<_>>().len();
             let edges_num  = node.exits.len();
-            let edges: HashMap<String, bool> = node.exits.iter().map(|e| (e.clone(), meta.visited_edges.contains_key(e)|| meta.visited_edges.contains_key(&format!("go {}",e)))).collect();
+            let edges: HashMap<String, u16> = node.exits.iter().map(|e| (e.clone(), max(*meta.visited_edges.get(e).unwrap_or(&0),  *meta.visited_edges.get(&format!("go {}",e)).unwrap_or(&0)))).collect();
             let mut gn: DotGraphNode = dot_graph::DotGraphNode::new(
                 meta.id,
                 node.title.clone(),
