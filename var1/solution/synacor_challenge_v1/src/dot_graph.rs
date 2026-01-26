@@ -15,8 +15,8 @@ pub struct DotGraphNode {
     index: Option<NodeIndex>,
     visits: u16,
     visited_edges_num: u16,
-    edges_num:  u16,
-    edges: HashMap<String, u16> //shows visited edges
+    edges_num: u16,
+    edges: HashMap<String, u16>, //shows visited edges
 }
 
 impl DotGraphNode {
@@ -29,8 +29,8 @@ impl DotGraphNode {
         notes: &HashMap<String, String>,
         visits: u16,
         visited_edges_num: u16,
-        edges_num:  u16,
-        edges: HashMap<String,u16>
+        edges_num: u16,
+        edges: HashMap<String, u16>,
     ) -> DotGraphNode {
         DotGraphNode {
             id,
@@ -71,7 +71,7 @@ impl DotGraphNode {
         const ORANGE: &str = "#FD971F"; // optional accent
         const BLUE_V_EDGE: &str = "#a358FF"; // for visited edges
         const BLUE_EDGE: &str = "#9378FF"; // for edges
-        const RED_INCOMPLETE : &str = "#FC5345"; //To mark incomplete node
+        const RED_INCOMPLETE: &str = "#FC5345"; //To mark incomplete node
 
         // Inventory row always spans 8 columns total (1 + 7)
         let inventory: String = if self.inventory.is_empty() {
@@ -146,7 +146,6 @@ impl DotGraphNode {
             format!(r#"<HR/>{}"#, rows)
         };
 
-
         let exits: String = if self.edges.is_empty() {
             "".to_string()
         } else {
@@ -174,7 +173,10 @@ impl DotGraphNode {
                 )
             }).collect::<String>();
 
-            format!(r#"<HR/><TR><TD COLSPAN="8" ALIGN="CENTER">Exits</TD></TR>{}"#, rows)
+            format!(
+                r#"<HR/><TR><TD COLSPAN="8" ALIGN="CENTER">Exits</TD></TR>{}"#,
+                rows
+            )
         };
 
         let message = self.message.replace('\n', "<BR/>");
