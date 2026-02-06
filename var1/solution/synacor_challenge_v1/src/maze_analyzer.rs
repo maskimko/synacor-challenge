@@ -326,12 +326,12 @@ impl MazeAnalyzer {
                 let commands = self
                     .get_full_path_back()
                     .into_iter()
-                    .map(|(_, _, cmd)| cmd)
-                    .map(|cmd| cmd.unwrap_or("START".cyan().to_string()))
+                    .flat_map(|(_, _, cmd)| cmd)
+                    // .map(|cmd| cmd.unwrap_or("START".cyan().to_string()))
                     .rev()
                     .collect::<Vec<String>>()
                     .join(" -> ");
-                eprintln!("Commands to node {}: {}", m.id, commands.yellow());
+                eprintln!("Commands to node {}: {} -> {}", m.id, "START".cyan(), commands.yellow());
             }
             None => {
                 warn!(
@@ -411,7 +411,10 @@ impl MazeAnalyzer {
                     debug!("updating inventory");
                     let head = self.head.clone().ok_or("no head")?;
                     self.visit_edge(&head, command.clone().unwrap().to_string().as_str(), &head);
-                    self.inventory_needs_update = self.update_inventory(resp_parts.inventory)?;
+                    let new_items_present= self.update_inventory(resp_parts.inventory)?;
+                    if new_items_present {
+                        trace!("detected new items in the inventory, to be used");
+                    }
                     self.set_aux_commands(resp_parts.pretext, command);
                 }
                 None => {
@@ -518,13 +521,16 @@ impl MazeAnalyzer {
     fn add_to_inventory(&mut self, item: String) {
         self.inventory_global.insert(item, (0, 0));
     }
+    /// update inventory, synchronizes the global inventory with the output of the 'inv' command, and returns true, if there are items, which have not been used yet
     fn update_inventory(&mut self, items: Vec<String>) -> Result<bool, Box<dyn Error>> {
         // Update global inventory
         // Remove items from global inventory, which are not present in the argument
         let mut global_inv = &mut self.inventory_global;
         // Lets not differentiate between 'lit lantern' and 'lantern'
         let allowed: HashSet<&String> = items.iter().collect();
+        // Remove not present
         global_inv.retain(|i, _| allowed.contains(i));
+        // Add new ones if needed with default values
         allowed.into_iter().for_each(|i| {
             global_inv.entry(i.clone()).or_insert((0, 0));
         });
@@ -532,6 +538,8 @@ impl MazeAnalyzer {
         // Use newly obtained items. I consider item as a new one, if it was never used.
        let new_items = global_inv.iter().filter(|(i, v)| v.0==0 ).map(|(k,_)| k).collect::<Vec<&String>>();
         new_items.iter().for_each(|item| {self.commands_queue.push_front(format!("use {}", item))});
+        // Mark update of inventory as completed
+        self.inventory_needs_update = false;
         Ok(!new_items.is_empty())
     }
     pub fn get_full_path_back(&self) -> Vec<(u16, String, Option<String>)> {
@@ -780,10 +788,39 @@ impl MazeAnalyzer {
         to_prev
     }
 
+    fn detect_loop(&self, node:&RID) -> Result<bool,String> {
+        // Detect self loop
+        let mut nm = self.get_node_meta(node).ok_or("failed to get node meta")?;
+        let self_loop =  nm.from.clone().map(|fr| fr.upgrade()).flatten().is_some_and(|f|f.eq(node));
+        if self_loop  {
+            return Ok(true);
+        }
+        // Detect "from" loop
+        // while let Some(p) = nm.from.clone() {
+        //     let upgraded = p.upgrade().ok_or("failed to upgrade node")?;
+        //     if upgraded.eq(node) {
+        //         return Ok(true);
+        //     }
+        //     nm = self.get_node_meta(&upgraded).ok_or("failed to get upgraded 'from' node meta")?;
+        // }
+        // Detect "origin" loop
+        let mut nm = self.get_node_meta(node).ok_or("failed to get node meta")?;
+        while let Some(p) = nm.origin.clone() {
+            if p.eq(node) {
+                return Ok(true);
+            }
+            nm = self.get_node_meta(&p).ok_or("failed to get origin node meta")?;
+        }
+        Ok(false)
+    }
     fn get_command_to_prev_in_stack(&self, node: &RID) -> Result<String, String> {
 
+        if let Some(lost)  = self.get_lost_decision(node) {
+            return Ok(lost);
+        }
         // Check for a self loop
-        let self_loop = self.get_node_meta(node).map(|nm| nm.from.clone()).flatten().map(|fr| fr.upgrade()).flatten().is_some_and(|f|f.eq(node));
+        let self_loop = self.detect_loop(node)?;
+        // let self_loop = self.get_node_meta(node).map(|nm| nm.from.clone()).flatten().map(|fr| fr.upgrade()).flatten().is_some_and(|f|f.eq(node));
             // { nm.from.clone().
             //     nm.from.as_ref().map(|o| {
             //     o.eq(node)
@@ -846,18 +883,25 @@ impl MazeAnalyzer {
             None
         }
     }
-    fn get_command_back_to_previous(&self, node: &RID) -> Option<String> {
-        let opposite_command = self.guess_opposite_command_from(node);
 
-        if node
-            .message
-            .contains("passages, all alike")
-        {
+    fn get_lost_decision(&self, node:&RID) -> Option<String> {
+        if node .message .contains("passages, all alike") {
             // If we are lost and cannot go back just pick a random one
             let directions = Self::get_exits_from_response(node);
             let mut rng = rng();
             let pick = rng.random_range(0..directions.len());
             Some(directions[pick].to_string())
+        } else {
+            None
+        }
+    }
+    fn get_command_back_to_previous(&self, node: &RID) -> Option<String> {
+        // It used to be a opposite command from, but now it is opposite to previous, because actually, if there are all edges visited, and we're in the fallback phase, and we cannot move back to the previous command, so we need to backtrack to previous graph node.
+        // And it is important to understand that "from" node does not work well here, because then we can get  back and forth loops.
+        let opposite_command = self.guess_opposite_command_prev(node);
+
+        if let Some(lost) = self.get_lost_decision(node) {
+            Some(lost)
         }else if opposite_command.is_some() {
                 Some(opposite_command.unwrap())
         } else {
@@ -868,17 +912,17 @@ impl MazeAnalyzer {
         }
     }
     /// This method returns new edge to visit. It checks if the edge was not visited more than 'visits_limit' times.
-    fn enqueue_commands(&mut self, node: &RID, visits_limit: u16) -> Result<(), String> {
+    fn enqueue_commands(&mut self, node: &RID, visits_limit: u16) -> Result<String, String> {
         // Maze analyzer should compare the steps value of the previous node with the minimal value from the hash map.
         // If it is greater, than it means that it was not an optimal way to go. And commands should not be enqueued the second time.
 
         if self.inventory_needs_update {
-            self.commands_queue.push_back("inv".to_string());
-            Ok(())
+            // self.commands_queue.push_back("inv".to_string());
+            Ok("inv".to_string())
         } else if let Some(cmd) = self.get_next_edge(node, visits_limit) {
             // if dangerous == 0 {
-                self.commands_queue.push_front(cmd);
-                Ok(())
+            //     self.commands_queue.push_front(cmd);
+                Ok(cmd)
             // } else {
             //     let target_cmd = self
             //         .get_command_to_n_back_in_stack(node, 1)
@@ -893,31 +937,45 @@ impl MazeAnalyzer {
             // }
         } else {
             // Try to return to previous
-            match self.get_command_to_prev_in_stack(node) {
-                Ok(cmd) => Ok(self.commands_queue.push_front(cmd)),
-                Err(e) => {
-                    debug!("failed to obtain previous node from stack: {}", e);
 
-                    // // reshuffling the stack
-                    // let pre_last_n = self
-                    //     .incompleted_stack
-                    //     .iter()
-                    //     .rev()
-                    //     .nth(1)
-                    //     .cloned()
-                    //     .and_then(|pln| {
-                    //         self.incompleted_stack.push(pln.clone());
-                    //         Some(pln)
-                    //     });
-                    let command_back = self.get_command_back_to_previous(node).ok_or("no command back")?;
+           self.get_way_back(node)
+            // match self.get_command_to_prev_in_stack(node) {
+            //     Ok(cmd) => Ok(self.commands_queue.push_front(cmd)),
+            //     Err(e) => {
+            //         debug!("failed to obtain previous node from stack: {}", e);
+            //
+            //         // // reshuffling the stack
+            //         // let pre_last_n = self
+            //         //     .incompleted_stack
+            //         //     .iter()
+            //         //     .rev()
+            //         //     .nth(1)
+            //         //     .cloned()
+            //         //     .and_then(|pln| {
+            //         //         self.incompleted_stack.push(pln.clone());
+            //         //         Some(pln)
+            //         //     });
+            //         let command_back = self.get_command_back_to_previous(node).ok_or("no command back")?;
+            //
+            //
+            //        // TODO: Actually there is one more thing to try. If 'from' node was not complete, try to return back to it.
+            //         // Though generally I need to investigate, why return to previous did not work out... This should not happen.
+            //
+            //         self.commands_queue.push_front(command_back);
+            //         Ok(())
+            //     }
+            // }
+        }
+    }
 
-
-                   // TODO: Actually there is one more thing to try. If 'from' node was not complete, try to return back to it.
-                    // Though generally I need to investigate, why return to previous did not work out... This should not happen.
-
-                    self.commands_queue.push_front(command_back);
-                    Ok(())
-                }
+    fn get_way_back(&self, node: &RID) -> Result<String, String> {
+        // Probably change it to the one-liner, if it proves to work well
+        let prev_in_stack = self. get_command_to_prev_in_stack(node);
+        match prev_in_stack {
+            Ok(cmd) => Ok(cmd),
+            Err(e) => {
+                let command_back = self.get_command_back_to_previous(node).ok_or("no command back")?;
+                Ok(command_back)
             }
         }
     }
@@ -1327,6 +1385,7 @@ visited_edges.insert(s, 0); // Just mark it to skip
     }
 
     fn complete_node(&mut self, node: &RID, current_node: &RID) -> ORID{
+        const MAX_VISITED_ALL_EDGES: u16 = 5;
         // TODO: Think about how to include pick up ("take" op) to the completed condition
 
        // IDEA: Actually probably I should not avoid "dangerous nodes" just mark them as visited. Anyway if the inventory has changed, we can revisit them once again.
@@ -1353,9 +1412,13 @@ visited_edges.insert(s, 0); // Just mark it to skip
             Some(node.clone())
         } else if from_is_completed || is_return_back || node.exits.len() == 1 {
             // Here is no valid command to return back to the previous node (Probably this is a falling down case
-                self.mark_node_as_completed(node);
+            self.mark_node_as_completed(node);
             Some(node.clone())
-        } else {
+        } else if self.get_node_meta(node).is_some_and(|nm| nm.visited_edges.get(&inv_hash).is_some_and(|nm| nm.iter().all(|(k, v)| *v> MAX_VISITED_ALL_EDGES))) {
+            // This case represents a loop within the nodes
+            self.mark_node_as_completed(node);
+            Some(node.clone())
+    } else {
             None
         }
         // if !self.completed_nodes.get(&inv_hash).is_some_and(|hs| hs.contains(node)) && self.incompleted_stack.last().eq(&Some(node)){
@@ -1363,6 +1426,10 @@ visited_edges.insert(s, 0); // Just mark it to skip
         //    self.incompleted_stack.pop();
         //     self.completed_nodes.entry(inv_hash).or_insert(HashSet::new()).insert(node.clone());
         // }
+    }
+
+    fn remove_from_incompleted_stack(&mut self, node: &RID) {
+        self.incompleted_stack.retain(|n| !n.eq(node))
     }
 
     fn mark_node_as_completed(&mut self, node: &RID) {
@@ -1375,17 +1442,24 @@ visited_edges.insert(s, 0); // Just mark it to skip
                 etv.iter()
                     .any(|e| matches!(CommandType::command_type(e), CommandType::Move(_)))
             })).unwrap_or(false);
-        let matches_top_of_the_incompleted_stack = self.incompleted_stack.last().eq(&Some(node));
-        // if  !self.get_node_meta(node).map(|nm| nm.edges_to_visit.as_ref()).is_some_and(|etv: &Vec<String>| etv.iter().any(|e| matches!(CommandType::command_type(e), CommandType::Move(_)))) && self.incompleted_stack.last().eq(&Some(node)) {
-        if no_more_moves && matches_top_of_the_incompleted_stack {
-            let inv_hash = self.global_inventory_hash();
-            debug!("completed node {}", node);
-            self.incompleted_stack.pop();
+        // We unconditionally remove the node from the completed stack, if there is a request for it
+        self.remove_from_incompleted_stack(node);
             self.completed_nodes
                 .entry(inv_hash)
                 .or_insert(HashSet::new())
                 .insert(node.clone());
-        }
+
+        // let matches_top_of_the_incompleted_stack = self.incompleted_stack.last().eq(&Some(node));
+        // // if  !self.get_node_meta(node).map(|nm| nm.edges_to_visit.as_ref()).is_some_and(|etv: &Vec<String>| etv.iter().any(|e| matches!(CommandType::command_type(e), CommandType::Move(_)))) && self.incompleted_stack.last().eq(&Some(node)) {
+        // if no_more_moves && matches_top_of_the_incompleted_stack {
+        //     let inv_hash = self.global_inventory_hash();
+        //     debug!("completed node {}", node);
+        //     self.incompleted_stack.pop();
+        //     self.completed_nodes
+        //         .entry(inv_hash)
+        //         .or_insert(HashSet::new())
+        //         .insert(node.clone());
+        // }
     }
 
     /// This function should traverse the maze and find the best route to the exit
@@ -1398,7 +1472,11 @@ visited_edges.insert(s, 0); // Just mark it to skip
         let node = self.head.clone().unwrap();
         self.validate_steps_left(&node)?;
         const VISITS_LIMIT_PER_EDGE: u16 = 25;
-        self.enqueue_commands(&node, VISITS_LIMIT_PER_EDGE)?;
+        // Let's perform the search only if there is no more commands in the commands queue
+        if self.commands_queue.is_empty() {
+            let next_command = self.enqueue_commands(&node, VISITS_LIMIT_PER_EDGE)?;
+            self.commands_queue.push_front(next_command);
+        }
         // We pop exactly 1 command, because new node will give other commands
         if let Some(cmd) = self.commands_queue.pop_front() {
             cmd.chars().for_each(|c| replay_buf.push_back(c));
@@ -1418,5 +1496,49 @@ visited_edges.insert(s, 0); // Just mark it to skip
         // This enables rambling / searching path
         self.steps_left += steps_limit;
         //  self.commands_counter += 1; //To expect output
+    }
+
+    fn get_path_to_next_incomplete(&self, current_node: &RID) -> Option<Vec<String>> {
+        let destination = self.incompleted_stack.last()?;
+        let mut  tracking : HashMap<&RID, (u16, bool, Option<RID>)> = HashMap::new();
+        // Initialization
+        self.nodes.iter().for_each(|n| { let _ = tracking.insert(n.0, (u16::MAX, false, None ));});
+         *tracking.entry(current_node).or_insert((u16::MAX, false, None)) = (0, true, None);
+
+       let mut queue : VecDeque<&RID>= VecDeque::<&RID>::new();
+        queue.push_back(current_node);
+        while !queue.is_empty() {
+           let cur = queue.pop_front().expect("queue must not be empty here");
+                if cur.eq(&destination) {
+                    break;
+                }
+                let tracking_entry = tracking.get(cur).cloned();
+                if let Some((steps, registered, origin)) = tracking_entry && !registered{
+                    let cur_nm = self.get_node_meta(cur)?;
+                    cur_nm.response_2_edge.iter().for_each(|n| {
+                        queue.push_back(n.0);
+                        *tracking.entry(n.0).or_insert((steps+1, true, Some(cur.clone()))) = (steps+1, true, Some(cur.clone()));
+                    })
+
+                }
+            // cur_nm.response_2_edge.iter().for_each(|(k, _)| queue.push_back(k));
+
+        }
+        let mut command_path :Vec<String> = vec![];
+        let mut cur: RID = destination.clone();
+        while let Some((steps, registered, parent)) = tracking.get(&cur) && *registered {
+            if parent.is_none() {
+                break;
+            }
+            // get command to
+            parent.as_ref().map(|p| self.get_node_meta(p)).flatten().map(|nm| nm.response_2_edge.get(&cur)).flatten().map(|edge| command_path.push(edge.clone()));
+            cur = parent.clone().expect("at this point parent must exist") ;
+        }
+        command_path.reverse();
+        if command_path.is_empty() {
+            None
+        } else {
+            Some(command_path)
+        }
     }
 }
